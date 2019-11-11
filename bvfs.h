@@ -24,6 +24,49 @@
  *       doesn't already exist.
  */
 
+#include <stdlib.h>
+#include <stdio.h>
+#include <unistd.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <time.h>
+
+/* To get local time.
+   time_t mytime;
+   mytime = time(NULL);
+   printf(ctime(&mytime));
+*/
+
+/* BEGIN STRUCT STUFF */
+
+struct INode {
+  char *fileName;
+  time_t time_stamp;
+  int num_bytes;
+  int num_blocks;
+  void blocks[];
+};
+
+
+struct ListNode {
+  void *data[15];
+  struct ListNode *next;
+};
+
+/* END STRUCT STUFF */
+
+
+
+//Globals for hard set limitations
+int FILE_AMOUNT = 256;
+
+// BYTES
+int FILENAME_SIZE = 32;
+int BLOCK_SIZE = 512;
+int PARTITION_SIZE = 8388608;
+int FILE_SIZE = 65536;
 
 
 
@@ -37,6 +80,85 @@ int bv_read(int bvfs_FD, void *buf, size_t count);
 int bv_unlink(const char* fileName);
 void bv_ls();
 
+/* START LINKED LIST STUFF */
+
+void print(){
+  struct Node *ptr = head;
+  printf("[ ");
+
+  while(ptr != NULL){
+    printf("%p,", ptr->data);
+    ptr = ptr->next;
+  }
+
+  printf(" ]\n");
+}
+
+void insert(void *data, int size, void* loc){
+  struct Node *newNode = (struct Node*) malloc(sizeof(struct Node));
+  newNode->data = data;
+  newNode->size = size;
+  newNode->next = NULL;
+
+  if(!head){
+    head = newNode;
+  } else {
+    struct Node *prev = NULL;
+    struct Node *curr = head;
+
+    if(curr->next == NULL){
+      curr->next = newNode;
+      return;
+    }
+
+    if(loc == NULL){
+      newNode->next = curr;
+      head = newNode;
+      return;
+    }
+
+    while(curr->data != loc){
+      if(curr->next == NULL){
+        curr->next = newNode;
+        return;
+      }
+      prev = curr;
+      curr = curr->next;
+    }
+
+    newNode->next = curr->next;
+    curr->next = newNode;
+  }
+}
+
+void *obliterate(void *loc){
+  struct Node *curr = head;
+  struct Node *prev = NULL;
+
+  if(!head){
+    return NULL;
+  }
+
+  while(curr->data != loc){
+    if(curr->next == NULL){
+      return NULL;
+    } else {
+      prev = curr;
+      curr = curr->next;
+    }
+  }
+
+  if(curr == head){
+    head = head->next;
+  } else {
+    prev->next = curr->next;
+  }
+  
+  free(curr);
+  return curr->data;
+}
+
+/* END LINKED LIST STUFF */
 
 
 
@@ -64,6 +186,26 @@ void bv_ls();
  *           etc.). Also, print a meaningful error to stderr prior to returning.
  */
 int bv_init(const char *fs_fileName) {
+
+  int fsFD = open(fs_fileName, O_CREAT | O_RDWR | O_EXCL, 0644);
+
+  struct INode INode_array[128];
+
+  if(fsFD < 0){
+    if(errno == EEXIST){
+      // TODO: The files already exists so initialize all the necessary datastructures.
+      write(fsFD, (void*)INode_array, sizeof(INode_array)/sizeof(INode_array[0]));
+      return 0;
+    } else if(errno == EACCES) {
+      // We got a permission denied error. TODO print meaningful error message.
+      return -1;
+    }
+  } else {
+    // TODO: The file does not exist so create the file to represent the File System.
+    // Good news is that opeinging with the O_CREAT tag means that it is already created when we get here.
+    // Then initialize all the necessary datastructures. 
+    write(fsFD, (void*)INode_array, sizeof(INode_array)/sizeof(INode_array[0]));
+    return 0;
 }
 
 
