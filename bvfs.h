@@ -1,3 +1,6 @@
+#ifndef BVFS_H
+#define BVFS_H
+
 /* CMSC 432 - Homework 7
  * Assignment Name: bvfs - the BV File System
  * Due: Thursday, November 21st @ 11:59 p.m.
@@ -45,14 +48,13 @@ struct INode {
   char *fileName;
   time_t time_stamp;
   int num_bytes;
-  int num_blocks;
-  void blocks[];
+  //short num_blocks;
+  short *blocks;
 };
 
-
-struct ListNode {
-  void *data[15];
-  struct ListNode *next;
+struct SuperBlockInfo {
+  short offsets[255];
+  short next;
 };
 
 /* END STRUCT STUFF */
@@ -68,7 +70,8 @@ int BLOCK_SIZE = 512;
 int PARTITION_SIZE = 8388608;
 int FILE_SIZE = 65536;
 
-
+struct SuperBlockInfo super_blocks[64];
+struct INode INode_array[256];
 
 // Prototypes
 int bv_init(const char *fs_fileName);
@@ -79,86 +82,6 @@ int bv_write(int bvfs_FD, const void *buf, size_t count);
 int bv_read(int bvfs_FD, void *buf, size_t count);
 int bv_unlink(const char* fileName);
 void bv_ls();
-
-/* START LINKED LIST STUFF */
-
-void print(){
-  struct Node *ptr = head;
-  printf("[ ");
-
-  while(ptr != NULL){
-    printf("%p,", ptr->data);
-    ptr = ptr->next;
-  }
-
-  printf(" ]\n");
-}
-
-void insert(void *data, int size, void* loc){
-  struct Node *newNode = (struct Node*) malloc(sizeof(struct Node));
-  newNode->data = data;
-  newNode->size = size;
-  newNode->next = NULL;
-
-  if(!head){
-    head = newNode;
-  } else {
-    struct Node *prev = NULL;
-    struct Node *curr = head;
-
-    if(curr->next == NULL){
-      curr->next = newNode;
-      return;
-    }
-
-    if(loc == NULL){
-      newNode->next = curr;
-      head = newNode;
-      return;
-    }
-
-    while(curr->data != loc){
-      if(curr->next == NULL){
-        curr->next = newNode;
-        return;
-      }
-      prev = curr;
-      curr = curr->next;
-    }
-
-    newNode->next = curr->next;
-    curr->next = newNode;
-  }
-}
-
-void *obliterate(void *loc){
-  struct Node *curr = head;
-  struct Node *prev = NULL;
-
-  if(!head){
-    return NULL;
-  }
-
-  while(curr->data != loc){
-    if(curr->next == NULL){
-      return NULL;
-    } else {
-      prev = curr;
-      curr = curr->next;
-    }
-  }
-
-  if(curr == head){
-    head = head->next;
-  } else {
-    prev->next = curr->next;
-  }
-  
-  free(curr);
-  return curr->data;
-}
-
-/* END LINKED LIST STUFF */
 
 
 
@@ -189,11 +112,20 @@ int bv_init(const char *fs_fileName) {
 
   int fsFD = open(fs_fileName, O_CREAT | O_RDWR | O_EXCL, 0644);
 
-  struct INode INode_array[128];
 
   if(fsFD < 0){
     if(errno == EEXIST){
       // TODO: The files already exists so initialize all the necessary datastructures.
+
+      // Make the file our partition size.
+      lseek(fsFD, PARTITION_SIZE-3, SEEK_SET);
+      write(fsFD, "0", sizeof("0"));
+
+      // Seek back to the beginning of the file to begin writing our metadata.
+      lseek(fsFD, 0, SEEK_SET);
+
+      // Create super block linked list
+
       write(fsFD, (void*)INode_array, sizeof(INode_array)/sizeof(INode_array[0]));
       return 0;
     } else if(errno == EACCES) {
@@ -204,10 +136,64 @@ int bv_init(const char *fs_fileName) {
     // TODO: The file does not exist so create the file to represent the File System.
     // Good news is that opeinging with the O_CREAT tag means that it is already created when we get here.
     // Then initialize all the necessary datastructures. 
-    write(fsFD, (void*)INode_array, sizeof(INode_array)/sizeof(INode_array[0]));
-    return 0;
-}
 
+    // Make the file our partition size.
+    lseek(fsFD, PARTITION_SIZE-3, SEEK_SET);
+    write(fsFD, "0", sizeof("0"));
+
+    // Seek back to the beginning of the file to begin writing our metadata.
+    lseek(fsFD, 0, SEEK_SET);
+    
+    // Create the Super Block which points to empty blocks.
+    short offset = 257;
+    short block = 0;
+    int loc = 0;
+
+    for(short x = 0; x < 255; x++){
+      write(fsFD, offset+x, 2);
+      printf("Writing: %d\n", offset+x);
+      super_blocks[loc].offsets[x] = offset+x;
+
+      // Last 2 bytes before block end goes to next superblock
+      if(x == 254){
+        write(fsFD, offset+x+1, 2);
+        super_blocks[loc].next = offset+x+1;
+      }
+
+    }
+
+    loc++;
+    block = 512;
+
+    // Write the INode array to file
+    write(fsFD, INode_array, sizeof(INode_array));
+
+    // Outer loop goes through all necessary superblocks
+    for(short i = block; i < 16384; i += 257){ 
+      
+      // Inner loop to assign each empty block to a superblock
+      for(short x = 1; x < 256; x++){
+        write(fsFD, block+x, 2);
+        printf("Writing: %d\n", block+x);
+        super_blocks[loc].offsets[x] = block+x;
+
+        // Last 2 bytes before block end goes to next superblock
+        if(x == 255){
+          write(fsFD, block+x+1, 2);
+          super_blocks[loc].next = block+x+1;
+        }
+
+      }
+
+      // Writing at position 0 here so we need to jump by 129+255 to our next superblock
+      block += 257;
+      loc++;
+      lseek(fsFD, block*BLOCK_SIZE, SEEK_SET);
+    }
+    
+    return 0;
+  }
+}
 
 
 
@@ -399,3 +385,5 @@ int bv_unlink(const char* fileName) {
  */
 void bv_ls() {
 }
+
+#endif
