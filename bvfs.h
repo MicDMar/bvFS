@@ -117,23 +117,68 @@ int bv_init(const char *fs_fileName) {
     if(errno == EEXIST){
       // TODO: The files already exists so initialize all the necessary datastructures.
 
-      // Make the file our partition size.
-      lseek(fsFD, PARTITION_SIZE-3, SEEK_SET);
-      write(fsFD, "0", sizeof("0"));
+      int fsFD = open(fs_fileName, O_RDWR | O_EXCL, 0644);
 
-      // Seek back to the beginning of the file to begin writing our metadata.
-      lseek(fsFD, 0, SEEK_SET);
+      // Traverse through our Super Blocks reading in information and populating our array.
 
-      // Create super block linked list
+      int pos = 0;
+      // Outer for loop to make sure we touch all of the super blocks.
+      for(int i = 0; i < sizeof(super_blocks)/sizeof(super_blocks[0]); i++){
+        short num;
 
-      write(fsFD, (void*)INode_array, sizeof(INode_array)/sizeof(INode_array[0]));
+        // Inner for loop to go through our file and read all of the information.
+        for(int j = 0; j < 256; j ++){
+          // Read in the int at that location
+          read(fsFD, (void *)(&num), sizeof(num));
+
+          // Push that int into the specified position in the specific location in the super_blocks array.
+          super_blocks[pos].offsets[j] = num;
+        }
+
+        // The last number in a super block is a reference to the next super block. Read it and go there.
+        read(fsFD, (void *)(&num), sizeof(num));
+        super_blocks[pos].next = num;
+        
+        // We're done with this super block. Seek to the next.
+        lseek(fsFD, ((super_blocks[pos].next-1)*512), SEEK_SET);
+        pos++;
+      }
+
+      // Seek back to start of INodes and read in informattion to populate our array.
+      // Tip: If you read back a zero there is NO file there so you can populate 
+      // the array at that position with a brand new INode struct which is waiting for
+      // a file.
+
+      // Seek to the start of our INodes.
+      lseek(fsFD, 512, SEEK_SET);
+
+      pos = 0;
+      // Start reading in and filling up our INode array.
+      for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]; i++)){
+
+        //TODO: How do you read in a struct?
+        struct INode *temp_INode;
+        char file_name[32];
+
+        read(fsFD, (void *)(&file_name), sizeof(file_name));
+
+        // If we read in a 0 here then we know we can just push in a 
+        if(file_name == 0){
+          INode_array[pos] = temp_INode;
+        } else {
+          //TODO
+          // If we get to here we know there is an INode there that needs to be populated into our array.
+
+        }
+        pos++;
+      }
+
       return 0;
     } else if(errno == EACCES) {
       // We got a permission denied error. TODO print meaningful error message.
       return -1;
     }
   } else {
-    // TODO: The file does not exist so create the file to represent the File System.
     // Good news is that opeinging with the O_CREAT tag means that it is already created when we get here.
     // Then initialize all the necessary datastructures. 
 
@@ -150,54 +195,63 @@ int bv_init(const char *fs_fileName) {
     short block = 0;
     int loc = 0;
 
-    printf("Size of tracker: %lu\n", sizeof(tracker));
-
     for(short x = 0; x < 255; x++){
       tracker = offset+x;
       write(fsFD, (void *)(&tracker), sizeof(tracker));
       printf("Writing: %d\n", tracker);
-      super_blocks[loc].offsets[x] = offset+x;
+      super_blocks[loc].offsets[x] = tracker;
 
       // Last 2 bytes before block end goes to next superblock
       if(x == 254){
         tracker = offset+x+1;
         write(fsFD, (void *)(&tracker), sizeof(tracker));
-        super_blocks[loc].next = offset+x+1;
+        super_blocks[loc].next = tracker;
       }
 
     }
-/*
+
     loc++;
     block = 512;
 
+    // Possibly need to revisit!
     // Write the INode array to file
-    write(fsFD, INode_array, sizeof(INode_array));
+    /*
+    for(int z = 0; z < 256; z++){
+      write(fsFD, (void *)(&INode_array[z]), sizeof(INode_array[z]));
+      lseek(fsFD, z+2*BLOCK_SIZE, SEEK_SET);
+    }
+    */
+      
+    lseek(fsFD, 511*BLOCK_SIZE, SEEK_SET);
 
     // Outer loop goes through all necessary superblocks
-    for(short i = block; i < 16384; i += 257){ 
+    for(short i = block; i < 16384; i += 256){ 
       
       // Inner loop to assign each empty block to a superblock
       for(short x = 1; x < 256; x++){
-        write(fsFD, block+x, 2);
-        printf("Writing: %d\n", block+x);
-        super_blocks[loc].offsets[x] = block+x;
+        tracker = block+x;
+        write(fsFD, (void *)(&tracker), 2);
+        printf("Writing: %d\n", tracker);
+        super_blocks[loc].offsets[x] = tracker;
 
         // Last 2 bytes before block end goes to next superblock
         if(x == 255){
-          write(fsFD, block+x+1, 2);
-          super_blocks[loc].next = block+x+1;
+          tracker = block+x+1;
+          write(fsFD, (void *)(&tracker), 2);
+          super_blocks[loc].next = tracker;
         }
 
       }
 
       // Writing at position 0 here so we need to jump by 129+255 to our next superblock
-      block += 257;
+      block += 256;
       loc++;
-      lseek(fsFD, block*BLOCK_SIZE, SEEK_SET);
+      lseek(fsFD, (block-1)*BLOCK_SIZE, SEEK_SET);
     }
-  */  
+
     return 0;
   }
+
 }
 
 
