@@ -143,25 +143,30 @@ int bv_init(const char *fs_fileName) {
 
     // Seek back to the beginning of the file to begin writing our metadata.
     lseek(fsFD, 0, SEEK_SET);
-    
+  
     // Create the Super Block which points to empty blocks.
     short offset = 257;
+    short tracker;
     short block = 0;
     int loc = 0;
 
+    printf("Size of tracker: %lu\n", sizeof(tracker));
+
     for(short x = 0; x < 255; x++){
-      write(fsFD, offset+x, 2);
-      printf("Writing: %d\n", offset+x);
+      tracker = offset+x;
+      write(fsFD, (void *)(&tracker), sizeof(tracker));
+      printf("Writing: %d\n", tracker);
       super_blocks[loc].offsets[x] = offset+x;
 
       // Last 2 bytes before block end goes to next superblock
       if(x == 254){
-        write(fsFD, offset+x+1, 2);
+        tracker = offset+x+1;
+        write(fsFD, (void *)(&tracker), sizeof(tracker));
         super_blocks[loc].next = offset+x+1;
       }
 
     }
-
+/*
     loc++;
     block = 512;
 
@@ -190,7 +195,7 @@ int bv_init(const char *fs_fileName) {
       loc++;
       lseek(fsFD, block*BLOCK_SIZE, SEEK_SET);
     }
-    
+  */  
     return 0;
   }
 }
