@@ -70,6 +70,7 @@ int BLOCK_SIZE = 512;
 int PARTITION_SIZE = 8388608;
 int FILE_SIZE = 65536;
 
+int INITIALIZED = 0;
 struct SuperBlockInfo super_blocks[64];
 struct INode INode_array[256];
 
@@ -112,7 +113,6 @@ int bv_init(const char *fs_fileName) {
 
   int fsFD = open(fs_fileName, O_CREAT | O_RDWR | O_EXCL, 0644);
 
-
   if(fsFD < 0){
     if(errno == EEXIST){
       // TODO: The files already exists so initialize all the necessary datastructures.
@@ -154,17 +154,17 @@ int bv_init(const char *fs_fileName) {
 
       pos = 0;
       // Start reading in and filling up our INode array.
-      for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]; i++)){
+      for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
 
         //TODO: How do you read in a struct?
         struct INode *temp_INode;
-        char file_name[32];
+        char *file_name;
 
         read(fsFD, (void *)(&file_name), sizeof(file_name));
 
         // If we read in a 0 here then we know we can just push in a 
         if(file_name == 0){
-          INode_array[pos] = temp_INode;
+          INode_array[pos] = *temp_INode;
         } else {
           //TODO
           // If we get to here we know there is an INode there that needs to be populated into our array.
@@ -173,9 +173,12 @@ int bv_init(const char *fs_fileName) {
         pos++;
       }
 
+      // File system was initialized correctly.
+      INITIALIZED = 1;
+
       return 0;
     } else if(errno == EACCES) {
-      // We got a permission denied error. TODO print meaningful error message.
+      fprintf(stderr, "Unable to access file due to file permissions.");
       return -1;
     }
   } else {
@@ -249,6 +252,9 @@ int bv_init(const char *fs_fileName) {
       lseek(fsFD, (block-1)*BLOCK_SIZE, SEEK_SET);
     }
 
+    // File system was initialized correctly.
+    INITIALIZED = 1;
+
     return 0;
   }
 
@@ -272,6 +278,20 @@ int bv_init(const char *fs_fileName) {
  *           returning.
  */
 int bv_destroy() {
+  /* We aren't mallocing any information so there is no need to free that up.
+   We will also update all of our super blocks and INodes for every call to
+   operation functions so there will be no need to write anything else to disk. */
+
+  //Simply check to see if the filesystem was initialized correctly or not.
+
+  if(INITIALIZED){
+    printf("Thank you for using bv_fs.");
+    return 0;
+  }
+
+  fprintf(stderr, "File system was never initialized with a call to bv_init().");
+  return -1;
+
 }
 
 
@@ -449,7 +469,7 @@ void bv_ls() {
   // First for loop to find out how many files we have stored in the file system.
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to track it for the first print.
-    if( i != NULL){
+    if(INode_array[i].num_bytes != 0){
       count++;
     }
   }
@@ -460,8 +480,8 @@ void bv_ls() {
   // Second for loop to print out all of the information for each file.
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to print out its info.
-    if( i != NULL){
-      printf(" bytes: %d, blocks: %d, %s, %s\n", INode_array[i].num_bytes, INode_array[i].num_bytes/512, INode_array[i].time_stamp, INode_array[i].file_name);
+    if(INode_array[i].num_bytes != 0){
+      printf(" bytes: %d, blocks: %d, %lu, %s\n", INode_array[i].num_bytes, INode_array[i].num_bytes/512, INode_array[i].time_stamp, INode_array[i].file_name);
     }
   }
 
