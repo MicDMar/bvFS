@@ -328,6 +328,32 @@ int BV_WTRUNC = 2;
  *           stderr prior to returning.
  */
 int bv_open(const char *fileName, int mode) {
+  /* Search through our INodes for the fileName in there.
+     If we find it then we can "open" the file and write bytes to it where it lives
+     otherwise we need to allocate a new INode with file information to use. */
+
+  for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
+
+    // Check to see if fileNames match.
+    if(INode_array[i].file_name == fileName){
+      //TODO We've found the file which lives at this INode. We need to return a file descriptor to write to it.
+      // Maybe we should just return the byte that we need to seek to as the file descriptor. That would make it
+      // Easier to deal with.
+
+    }
+  }
+
+  // At this point we've exhausted our INode_array and the file does not exist in our filesystem already
+  // so lets create it and put it at the lowest INode.
+  for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
+    if(INode_array[i].file_name == NULL){
+      // We've found the closest empty INode so lets put a file in there.
+
+    }
+  }
+  
+  //We should theoretically never arive here so if we do just return an error.
+  return -1;
 }
 
 
@@ -469,7 +495,7 @@ void bv_ls() {
   // First for loop to find out how many files we have stored in the file system.
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to track it for the first print.
-    if(INode_array[i].num_bytes != 0){
+    if(INode_array[i].file_name != NULL){
       count++;
     }
   }
@@ -480,7 +506,7 @@ void bv_ls() {
   // Second for loop to print out all of the information for each file.
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to print out its info.
-    if(INode_array[i].num_bytes != 0){
+    if(INode_array[i].file_name != NULL){
       printf(" bytes: %d, blocks: %d, %lu, %s\n", INode_array[i].num_bytes, INode_array[i].num_bytes/512, INode_array[i].time_stamp, INode_array[i].file_name);
     }
   }
