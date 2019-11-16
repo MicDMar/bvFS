@@ -45,7 +45,7 @@
 /* BEGIN STRUCT STUFF */
 
 struct INode {
-  char *fileName;
+  char *file_name;
   time_t time_stamp;
   int num_bytes;
   //short num_blocks;
@@ -443,6 +443,28 @@ int bv_unlink(const char* fileName) {
  *   void
  */
 void bv_ls() {
+  
+  int count;
+
+  // First for loop to find out how many files we have stored in the file system.
+  for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
+    // There is a file stored in this INode so we need to track it for the first print.
+    if( i != NULL){
+      count++;
+    }
+  }
+
+  // Print out the number of files we found
+  printf(" %d Files\n", count);
+
+  // Second for loop to print out all of the information for each file.
+  for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
+    // There is a file stored in this INode so we need to print out its info.
+    if( i != NULL){
+      printf(" bytes: %d, blocks: %d, %s, %s\n", INode_array[i].num_bytes, INode_array[i].num_bytes/512, INode_array[i].time_stamp, INode_array[i].file_name);
+    }
+  }
+
 }
 
 #endif
