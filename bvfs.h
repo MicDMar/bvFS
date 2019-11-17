@@ -45,8 +45,8 @@
 /* BEGIN STRUCT STUFF */
 
 struct INode {
-  char *file_name;
-  time_t time_stamp;
+  const char *file_name;
+  char *time_stamp;
   int num_bytes;
   //short num_blocks;
   short *blocks;
@@ -71,6 +71,7 @@ int PARTITION_SIZE = 8388608;
 int FILE_SIZE = 65536;
 
 int INITIALIZED = 0;
+int fsFD;
 struct SuperBlockInfo super_blocks[64];
 struct INode INode_array[256];
 
@@ -111,13 +112,15 @@ void bv_ls();
  */
 int bv_init(const char *fs_fileName) {
 
-  int fsFD = open(fs_fileName, O_CREAT | O_RDWR | O_EXCL, 0644);
+  fsFD = open(fs_fileName, O_CREAT | O_RDWR | O_EXCL, 0644);
 
   if(fsFD < 0){
     if(errno == EEXIST){
       // TODO: The files already exists so initialize all the necessary datastructures.
 
-      int fsFD = open(fs_fileName, O_RDWR | O_EXCL, 0644);
+      close(fsFD);
+
+      fsFD = open(fs_fileName, O_RDWR | O_EXCL, 0644);
 
       // Traverse through our Super Blocks reading in information and populating our array.
 
@@ -285,6 +288,7 @@ int bv_destroy() {
   //Simply check to see if the filesystem was initialized correctly or not.
 
   if(INITIALIZED){
+    close(fsFD);
     printf("Thank you for using bv_fs.");
     return 0;
   }
@@ -336,10 +340,35 @@ int bv_open(const char *fileName, int mode) {
 
     // Check to see if fileNames match.
     if(INode_array[i].file_name == fileName){
-      //TODO We've found the file which lives at this INode. We need to return a file descriptor to write to it.
+      // We've found the file which lives at this INode. We need to return a file descriptor to write to it.
       // Maybe we should just return the byte that we need to seek to as the file descriptor. That would make it
       // Easier to deal with.
 
+      if(mode == 1){
+        // We need to find the next block that can be written to.
+        int bytes = INode_array[i].num_bytes;
+        int loc = 0;
+        for(int j = 0; j < sizeof(INode_array[i].blocks)/sizeof(INode_array[i].blocks[0]); j++){
+          bytes -= 512;
+          loc++;
+        }
+        
+        return (((INode_array[i].blocks[loc]-1)*512) + bytes);
+      }
+      
+      if(mode == 2){
+        // THIS IS BAD. We are never giving back the freed up space to our super blocks.
+        // Idea of how to do this. subtrack the lowest super block from the block that needs to
+        // be freed. Then multiply the remainder by 2 to get to the specific byte that you need to rewrite over
+        // with a number.
+        short save = INode_array[i].blocks[0];
+        INode_array[i].blocks = NULL;
+
+        INode_array[i].blocks[0] = save;
+
+        return (save-1)*512;
+
+      }
     }
   }
 
@@ -348,11 +377,45 @@ int bv_open(const char *fileName, int mode) {
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     if(INode_array[i].file_name == NULL){
       // We've found the closest empty INode so lets put a file in there.
+      // To do this we need to find the lowest empty block that we can write to.
+      // That means loop through our super blocks till we found one!
+
+      // Outer loop to go through our super block array.
+      for(int j = 0; j < sizeof(super_blocks)/sizeof(super_blocks[0]); j++){
+
+        // Inner loop to go through our offset array in each super block.
+        for(int x = 0; x < sizeof(super_blocks[j].offsets)/sizeof(super_blocks[j].offsets[0]); x++){
+
+          // This means that there is empty space at this offset!
+          if(super_blocks[j].offsets[x] != 0){
+            // TODO check to make sure fileName is not greater than 32 bytes.
+            INode_array[i].file_name = fileName;
+            INode_array[i].blocks = &super_blocks[j].offsets[x];
+
+            // Get the time_stamp
+            time_t mytime = time(NULL);
+            INode_array[i].time_stamp = ctime(&mytime);
+
+            // Now make sure the super block there is NULL so nothing else can write to it.
+            int fd = super_blocks[i].offsets[x];
+            super_blocks[i].offsets[x] = 0;
+
+            return (fd-1)*512;
+          }
+        }
+      }
+      // The reason we return -1 here is because we've exhausted our super blocks so there are
+      // No free blocks left to write to.
+
+      fprintf(stderr, "File System full. There are no free blocks to write files to.");
+      return -1;
 
     }
   }
+
+  // If we get here all INodes have been taken so we can't add more files.
   
-  //We should theoretically never arive here so if we do just return an error.
+  fprintf(stderr, "File System full. There are too many files in the system.");
   return -1;
 }
 
@@ -507,7 +570,7 @@ void bv_ls() {
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to print out its info.
     if(INode_array[i].file_name != NULL){
-      printf(" bytes: %d, blocks: %d, %lu, %s\n", INode_array[i].num_bytes, INode_array[i].num_bytes/512, INode_array[i].time_stamp, INode_array[i].file_name);
+      printf(" bytes: %d, blocks: %d, %s, %s\n", INode_array[i].num_bytes, INode_array[i].num_bytes/512, INode_array[i].time_stamp, INode_array[i].file_name);
     }
   }
 
