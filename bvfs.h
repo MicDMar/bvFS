@@ -69,6 +69,7 @@ int FILENAME_SIZE = 32;
 int BLOCK_SIZE = 512;
 int PARTITION_SIZE = 8388608;
 int FILE_SIZE = 65536;
+char * GLOBAL_FILE = NULL;
 
 int INITIALIZED = 0;
 int fsFD;
@@ -493,6 +494,48 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
  *           prior to returning.
  */
 int bv_read(int bvfs_FD, void *buf, size_t count) {
+  //TODO:Make file descriptor global variable so
+  //we can check if it is open (return appropriate error)
+  int writtenBytes=0;
+  //finding which file to read
+  for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
+    // Check to see if fileNames match.
+    if(INode_array[i].file_name == GLOBAL_FILE){
+      //case for if there is more space in our file compared to
+      //how much we want to read into buffer
+      if(count>INode_array[i].num_bytes){
+        int loc = 0;
+        while(count>BLOCK_SIZE){
+          lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+          read(fsFD, buf, 512);
+          count-=512;
+          loc++;
+          writtenBytes+=512;
+        }
+          //last time through, filling up the rest of count
+          lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+          read(fsFD, buf, count);
+          writtenBytes+=count;
+      }
+      //the case for if we are asking for more bytes than we have in file 
+      //to be read to the buffer
+      else{
+        int loc = 0;
+        while(count>BLOCK_SIZE){
+          lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+          read(fsFD, buf, 512);
+          count-=512;
+          loc++;
+          writtenBytes+=512;
+        }
+          //last time through, filling up the rest of count
+          lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+          read(fsFD, buf, INode_array[i].num_bytes-writtenBytes);
+          writtenBytes+=(INode_array[i].num_bytes-writtenBytes);
+      }
+      }
+    }
+  return writtenBytes;
 }
 
 
