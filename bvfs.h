@@ -389,7 +389,12 @@ int bv_open(const char *fileName, int mode) {
 
           // This means that there is empty space at this offset!
           if(super_blocks[j].offsets[x] != 0){
-            // TODO check to make sure fileName is not greater than 32 bytes.
+            //check to make sure fileName is not greater than 32 bytes.
+            if(sizeof(*(fileName))>31){
+              fprintf(stderr,"File name is too many characters");
+              return -1;
+            }
+
             INode_array[i].file_name = fileName;
             INode_array[i].blocks = &super_blocks[j].offsets[x];
 
