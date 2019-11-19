@@ -823,6 +823,7 @@ int bv_unlink(const char* fileName) {
               write(fsFD, &super_block.offsets[z], 2);
             }
 
+            //memcpy(&super_block, &blank_super_block, sizeof(struct SuperBlockInfo));
             super_block = blank_super_block;
 
             super_block.next = current_super_block;
