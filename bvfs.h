@@ -58,11 +58,11 @@ struct SuperBlockInfo {
 };
 
 struct Cursor {
-  char *file_name;
+  const char *file_name;
   int pos;
   int block;
   int mode;
-}
+};
 
 /* END STRUCT STUFF */
 
@@ -81,7 +81,7 @@ int INITIALIZED = 0;
 int fsFD;
 struct SuperBlockInfo super_blocks[64];
 struct INode INode_array[256];
-char *current_open_file;
+const char *current_open_file;
 struct Cursor cursors[256];
 
 // Prototypes
@@ -364,7 +364,7 @@ int bv_open(const char *fileName, int mode) {
           if(cursors[y].file_name == fileName){
             cursors[y].file_name = fileName;
             cursors[y].block = save;
-            cursors[y].pos = (fd-1)*512;
+            cursors[y].pos = (save-1)*512;
             cursors[y].mode = mode;
             break;
           }
@@ -497,7 +497,7 @@ int bv_close(int bvfs_FD) {
  *           prior to returning.
  */
 int bv_write(int bvfs_FD, const void *buf, size_t count) {
-  int writtenBytesi = 0;
+  int writtenBytes = 0;
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // Check to see if fileNames match.
     if(INode_array[i].file_name == current_open_file){
@@ -521,8 +521,8 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
 
           // In this case we have enough room to write without overflowing to a new block.
           if(((cursors[y].block-1)*512 - cursors[y].pos) >= count){
-            write(fsFd, buf, count);
-            writeenBytes += count;
+            write(fsFD, buf, count);
+            writtenBytes += count;
           } else {
             // Lets to the first time for the "rest" of the block even if it is the start.
             // That way we know by the time we get to the while loop we are working with full block sizes.
@@ -537,6 +537,7 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
             count -= location;
 
             while(count > 0){
+              int new_block = 0;
               // Aquire a new block.
               // Outer loop to go through our super block array.
               for(int j = 1; j < sizeof(super_blocks)/sizeof(super_blocks[0]); j++){
@@ -549,7 +550,7 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
                   // Check our first super block.
                   // Also what if one of the super blocks is now empty? We need to free that block up.
                   if(super_blocks[j].offsets[x] != 0){
-                    int new_block = super_blocks[j].offsets[x];
+                    new_block = super_blocks[j].offsets[x];
 
                     // TODO put the block in the blocks of the INode.
 
