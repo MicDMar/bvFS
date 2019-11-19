@@ -562,7 +562,6 @@ int bv_close(int bvfs_FD) {
  *           prior to returning.
  */
 int bv_write(int bvfs_FD, const void *buf, size_t count) {
-  /*
   int writtenBytes = 0;
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // Check to see if fileNames match.
@@ -605,26 +604,54 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
             while(count > 0){
               int new_block = 0;
               // Aquire a new block.
-              // Outer loop to go through our super block array.
-              for(int j = 1; j < sizeof(super_blocks)/sizeof(super_blocks[0]); j++){
 
-                // Inner loop to go through our offset array in each super block.
-                for(int x = 0; x < sizeof(super_blocks[j].offsets)/sizeof(super_blocks[j].offsets[0]); x++){
+              // Loop through all of our offsets to find the next empty block.
+              for(int x = 0; x < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); x++){
 
-                  // This means that there is empty space at this offset!
-                  // TODO what if there isn't an empty space? We need to go back through and
-                  // Check our first super block.
-                  // Also what if one of the super blocks is now empty? We need to free that block up.
-                  if(super_blocks[j].offsets[x] != 0){
-                    new_block = super_blocks[j].offsets[x];
+                // Our current super block is empty so lets just use this one.
+                if(super_block.is_empty == 1){
+                  new_block = current_super_block;
+                  current_super_block = super_block.next;
 
-                    // TODO put the block in the blocks of the INode.
+                  // Seek to the next super block and read it into memory.
+                  lseek(fsFD, (current_super_block-1)*512, SEEK_SET);
 
-                    // Write over the super block to make sure it's null.
+                  short num;
+                  for(int j = 0; j < 256; j ++){
+                    // Read in the int at that location
+                    read(fsFD, (void *)(&num), sizeof(num));
 
+                    // Push that int into the specified position in the specific location in the super_blocks array.
+                    super_block.offsets[j] = num;
+                  }
+
+                  // The last number in a super block is a reference to the next super block.
+                  read(fsFD, (void *)(&num), sizeof(num));
+                  super_block.next = num;
+                  super_block.is_empty = 0;
+
+                  for(int z = 0; z < sizeof(INode_array[i].file_blocks)/sizeof(INode_array[i].file_blocks[0]); z++){
+                    if(INode_array[i].file_blocks[z] == 0){
+                      INode_array[i].file_blocks[z] = new_block;
+                      break;
+                    }
+                  }
+                } 
+
+                // We found empty space in this super block to use.
+                else if(super_block.offsets[x] != 0){
+                  new_block = super_block.offsets[x];
+                  super_block.offsets[x] = 0;
+
+                  for(int z = 0; z < sizeof(INode_array[i].file_blocks)/sizeof(INode_array[i].file_blocks[0]); z++){
+                    if(INode_array[i].file_blocks[z] == 0){
+                      INode_array[i].file_blocks[z] = new_block;
+                      break;
+                    }
                   }
                 }
               }
+
               // Seek to the begining of that new block.
               lseek(fsFD, (new_block-1)*512, SEEK_SET);
 
@@ -645,7 +672,6 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
     }
   }
   return writtenBytes;
-  */
 }
 
 
