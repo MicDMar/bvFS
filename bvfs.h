@@ -45,16 +45,16 @@
 /* BEGIN STRUCT STUFF */
 
 struct INode {
-  const char *file_name;
-  char *time_stamp;
+  const char file_name[32];
+  time_t time_stamp;
   int num_bytes;
-  //short num_blocks;
-  short *blocks;
+  short blocks[128];
 };
 
 struct SuperBlockInfo {
   short offsets[255];
   short next;
+  short is_empty;
 };
 
 struct Cursor {
@@ -79,7 +79,8 @@ int FILE_SIZE = 65536;
 
 int INITIALIZED = 0;
 int fsFD;
-struct SuperBlockInfo super_blocks[64];
+struct SuperBlockInfo *super_block;
+short current_super_block;
 struct INode INode_array[256];
 const char *current_open_file;
 struct Cursor cursors[256];
@@ -130,32 +131,24 @@ int bv_init(const char *fs_fileName) {
 
       fsFD = open(fs_fileName, O_RDWR | O_EXCL, 0644);
 
-      // Traverse through our Super Blocks reading in information and populating our array.
+      // Read in the current super block that we are using.
+      read(fsFD, (void*)(&current_super_block), 2);
 
-      int pos = 0;
-      // Outer for loop to make sure we touch all of the super blocks.
-      for(int i = 0; i < sizeof(super_blocks)/sizeof(super_blocks[0]); i++){
-        short num;
-
-        // Inner for loop to go through our file and read all of the information.
-        for(int j = 0; j < 256; j ++){
-          // Read in the int at that location
-          read(fsFD, (void *)(&num), sizeof(num));
-
-          // Push that int into the specified position in the specific location in the super_blocks array.
-          super_blocks[pos].offsets[j] = num;
-        }
-
-        // The last number in a super block is a reference to the next super block. Read it and go there.
+      // Go to the first super block and read it into memory.
+      for(int j = 0; j < 256; j ++){
+        // Read in the int at that location
         read(fsFD, (void *)(&num), sizeof(num));
-        super_blocks[pos].next = num;
-        
-        // We're done with this super block. Seek to the next.
-        lseek(fsFD, ((super_blocks[pos].next-1)*512), SEEK_SET);
-        pos++;
+
+        // Push that int into the specified position in the specific location in the super_blocks array.
+        super_block.offsets[j] = num;
       }
 
-      // Seek back to start of INodes and read in informattion to populate our array.
+      // The last number in a super block is a reference to the next super block. Read it and go there.
+      read(fsFD, (void *)(&num), sizeof(num));
+      super_block.next = num;
+      super_block.is_empty = 0;
+        
+      // Seek back to start of INodes and read in information to populate our array.
 
       lseek(fsFD, 512, SEEK_SET);
 
@@ -180,32 +173,17 @@ int bv_init(const char *fs_fileName) {
 
     // Seek back to the beginning of the file to begin writing our metadata.
     lseek(fsFD, 0, SEEK_SET);
+
+    // Create the Super Block which points to the first super block.
+    short block = 257;
+    current_super_block = 257;
+    write(fsFD, (short *)(&block), 2);
   
-    // Create the Super Block which points to empty blocks.
-    short offset = 257;
+    // Some information to help us with the blocks.
     short tracker;
-    short block = 0;
     int loc = 0;
 
-    for(short x = 0; x < 255; x++){
-      tracker = offset+x;
-      write(fsFD, (void *)(&tracker), sizeof(tracker));
-      printf("Writing: %d\n", tracker);
-      super_blocks[loc].offsets[x] = tracker;
-
-      // Last 2 bytes before block end goes to next superblock
-      if(x == 254){
-        tracker = offset+x+1;
-        write(fsFD, (void *)(&tracker), sizeof(tracker));
-        super_blocks[loc].next = tracker;
-      }
-
-    }
-
-    loc++;
-    block = 512;
-
-    lseek(fsFD, 511*BLOCK_SIZE, SEEK_SET);
+    lseek(fsFD, (block-1)*BLOCK_SIZE, SEEK_SET);
 
     // Outer loop goes through all necessary superblocks
     for(short i = block; i < 16384; i += 256){ 
@@ -215,20 +193,23 @@ int bv_init(const char *fs_fileName) {
         tracker = block+x;
         write(fsFD, (void *)(&tracker), 2);
         printf("Writing: %d\n", tracker);
-        super_blocks[loc].offsets[x] = tracker;
+        if(loc == 0) { super_block.offsets[x] = tracker; }
 
         // Last 2 bytes before block end goes to next superblock
         if(x == 255){
           tracker = block+x+1;
           write(fsFD, (void *)(&tracker), 2);
-          super_blocks[loc].next = tracker;
+          if(loc == 0) {
+            super_block.next = tracker;
+            super_block.is_empty = 0;
+          }
         }
 
       }
 
       // Writing at position 0 here so we need to jump by 129+255 to our next superblock
       block += 256;
-      loc++;
+      loc = 1;
       lseek(fsFD, (block-1)*BLOCK_SIZE, SEEK_SET);
     }
 
@@ -350,12 +331,37 @@ int bv_open(const char *fileName, int mode) {
 
       // TRUNCATE MODE
       if(mode == 2){
-        // TODO THIS IS BAD. We are never giving back the freed up space to our super blocks.
-        // Idea of how to do this. subtrack the lowest super block from the block that needs to
-        // be freed. Then multiply the remainder by 2 to get to the specific byte that you need to rewrite over
-        // with a number.
+        // Give back all of the blocks that are now empty.
         short save = INode_array[i].blocks[0];
-        INode_array[i].blocks = NULL;
+
+        for(int x = 1; x < sizeof(INode_array.blocks)/sizeof(INode_array.blocks[0]); x++){
+
+          if(INode_array.blocks[x] != 0){
+            int flag = 0;
+            for(int y = 0; y < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); y++){
+              if(super_block.offsets[y] == 0){
+                flag = 1;
+                super_block.is_empty = 0;
+                super_block.offsets[y] = Inode_array.blocks[x];
+                break;
+              }
+            }
+            // If there was no empty spots in the super block that means we need to make a new one.
+            if(flag == 0){
+              // We need to write back our super block to memory.
+              lseek(fsFD, (current_super_block-1)*512, SEEK_SET);
+
+              for(int z = 0; z < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); z++){
+                write(fsFD, super_block.offsets[z], 2);
+              }
+
+              super_block.next = current_super_block;
+              super_block.is_empty = 1;
+              super_block.offsets = {0};
+              current_super_block = INode_array.blocks[x];
+            }
+          }
+        }
 
         INode_array[i].blocks[0] = save;
 
@@ -387,50 +393,102 @@ int bv_open(const char *fileName, int mode) {
       // To do this we need to find the lowest empty block that we can write to.
       // That means loop through our super blocks till we found one!
 
-      // Outer loop to go through our super block array.
-      for(int j = 1; j < sizeof(super_blocks)/sizeof(super_blocks[0]); j++){
+      // Go through our offset array in each super block.
+      for(int x = 0; x < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); x++){
 
-        // Inner loop to go through our offset array in each super block.
-        for(int x = 0; x < sizeof(super_blocks[j].offsets)/sizeof(super_blocks[j].offsets[0]); x++){
-
-          // This means that there is empty space at this offset!
-          // TODO what if there isn't an empty space? We need to go back through and
-          // Check our first super block.
-          // Also what if one of the super blocks is now empty? We need to free that block up.
-          if(super_blocks[j].offsets[x] != 0){
-            //check to make sure fileName is not greater than 32 bytes.
-            if(sizeof(*(fileName))>31){
-              fprintf(stderr,"File name is too many characters");
-              return -1;
-            }
-
-            INode_array[i].file_name = fileName;
-            INode_array[i].blocks = &super_blocks[j].offsets[x];
-
-            // Get the time_stamp
-            time_t mytime = time(NULL);
-            INode_array[i].time_stamp = ctime(&mytime);
-
-            // Now make sure the super block there is NULL so nothing else can write to it.
-            int fd = super_blocks[i].offsets[x];
-            super_blocks[i].offsets[x] = 0;
-
-            // Create a cursor to go along with this file.
-            for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
-              if(cursors[y].file_name == NULL){
-                cursors[y].file_name = fileName;
-                cursors[y].block = fd;
-                cursors[y].pos = (fd-1)*512;
-                cursors[y].mode = mode;
-                break;
-              }
-            }
-
-            // Set the file for current open file.
-            current_open_file = fileName;
-
-            return (fd-1)*512;
+        // This means that there is empty space at this offset!
+        if(super_block.is_empty == 1){
+          // We can just use this super block.
+          //check to make sure fileName is not greater than 32 bytes.
+          if(sizeof(*(fileName))>31){
+            fprintf(stderr,"File name is too many characters");
+            return -1;
           }
+
+          INode_array[i].file_name = fileName;
+          INode_array[i].blocks = current_super_block;
+          current_super_block = super_block.next;
+
+          // Seek to the next super block and read it into memory.
+          lseek(fsFD, (current_super_block-1)*512, SEEK_SET);
+
+          for(int j = 0; j < 256; j ++){
+            // Read in the int at that location
+            read(fsFD, (void *)(&num), sizeof(num));
+
+            // Push that int into the specified position in the specific location in the super_blocks array.
+            super_block.offsets[j] = num;
+          }
+
+          // The last number in a super block is a reference to the next super block.
+          read(fsFD, (void *)(&num), sizeof(num));
+          super_block.next = num;
+          super_block.is_empty = 0;
+
+          // Get the time_stamp
+          time_t mytime = time(NULL);
+          INode_array[i].time_stamp = mytime;
+
+          // Now make sure the super block there is NULL so nothing else can write to it.
+          int fd = super_blocks[i].offsets[x];
+          super_blocks[i].offsets[x] = 0;
+
+          // Create a cursor to go along with this file.
+          for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
+            if(cursors[y].file_name == NULL){
+              cursors[y].file_name = fileName;
+              cursors[y].block = fd;
+              cursors[y].pos = (fd-1)*512;
+              cursors[y].mode = mode;
+              break;
+            }
+          }
+
+          // Set the file for current open file.
+          current_open_file = fileName;
+
+          return (fd-1)*512;
+         
+        }
+
+        else if(super_block.offsets[x] != 0){
+          //check to make sure fileName is not greater than 32 bytes.
+          if(sizeof(*(fileName))>31){
+            fprintf(stderr,"File name is too many characters");
+            return -1;
+          }
+
+          INode_array[i].file_name = fileName;
+          INode_array[i].blocks[0] = super_block.offsets[x];
+
+          // Get the time_stamp
+          time_t mytime = time(NULL);
+          INode_array[i].time_stamp = ctime(&mytime);
+
+          // Now make sure the super block there is NULL so nothing else can write to it.
+          int fd = super_block.offsets[x];
+          super_block.offsets[x] = 0;
+
+          // Check to see if the block is empty.
+          if(fd == super_block.next-1){
+            super_block.is_empty = 1;
+          }
+
+          // Create a cursor to go along with this file.
+          for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
+            if(cursors[y].file_name == NULL){
+              cursors[y].file_name = fileName;
+              cursors[y].block = fd;
+              cursors[y].pos = (fd-1)*512;
+              cursors[y].mode = mode;
+              break;
+            }
+          }
+
+          // Set the file for current open file.
+          current_open_file = fileName;
+
+          return (fd-1)*512;
         }
       }
       // The reason we return -1 here is because we've exhausted our super blocks so there are
@@ -447,7 +505,6 @@ int bv_open(const char *fileName, int mode) {
   fprintf(stderr, "File System full. There are too many files in the system.");
   return -1;
 }
-
 
 
 
@@ -683,6 +740,45 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
  *           Also, print a meaningful error to stderr prior to returning.
  */
 int bv_unlink(const char* fileName) {
+
+  for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
+
+    if(INode_array.file_name == fileName){
+      for(int x = 0; x < sizeof(INode_array.blocks)/sizeof(INode_array.blocks[0]); x++){
+
+        if(INode_array.blocks[x] != 0){
+          int flag = 0;
+          for(int y = 0; y < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); y++){
+            if(super_block.offsets[y] == 0){
+              flag = 1;
+              super_block.is_empty = 0;
+              super_block.offsets[y] = Inode_array.blocks[x];
+              break;
+            }
+          }
+          // If there was no empty spots in the super block that means we need to make a new one.
+          if(flag == 0){
+            // We need to write back our super block to memory.
+            lseek(fsFD, (current_super_block-1)*512, SEEK_SET);
+
+            for(int z = 0; z < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); z++){
+              write(fsFD, super_block.offsets[z], 2);
+            }
+
+            super_block.next = current_super_block;
+            super_block.is_empty = 1;
+            super_block.offsets = {0};
+            current_super_block = INode_array.blocks[x];
+          }
+        }
+      }
+
+      return 0;
+    }
+  }
+
+  fprintf(stderr, "File does not exist.");
+  return -1;
 }
 
 
@@ -736,7 +832,7 @@ void bv_ls() {
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to print out its info.
     if(INode_array[i].file_name != NULL){
-      printf(" bytes: %d, blocks: %d, %s, %s\n", INode_array[i].num_bytes, INode_array[i].num_bytes/512, INode_array[i].time_stamp, INode_array[i].file_name);
+      printf(" bytes: %d, blocks: %d, %.24s, %s\n", INode_array[i].num_bytes, INode_array[i].num_bytes/512, ctime(&INode_array[i].time_stamp), INode_array[i].file_name);
     }
   }
 
