@@ -81,9 +81,9 @@ const char *current_open_file;
 struct Cursor cursors[256];
 
 // Blank Stuff
-static const struct INode blank_INode;
-static const struct Cursor blank_cursor;
-static const struct SuperBlockInfo blank_super_block;
+static const struct INode blank_INode = {{0}, 0, 0, {0}};
+static const struct Cursor blank_cursor = {0, 0, 0, 0};
+static const struct SuperBlockInfo blank_super_block = {{0}, 0, 0};
 
 // Prototypes
 int bv_init(const char *fs_fileName);
@@ -180,6 +180,7 @@ int bv_init(const char *fs_fileName) {
     current_super_block = 257;
     write(fsFD, (short *)(&block), 2);
   
+    // Make our INode array with blank INode structs.
     for(int i =0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
       INode_array[i] = blank_INode;
     }
@@ -210,6 +211,8 @@ int bv_init(const char *fs_fileName) {
           }
         }
       }
+
+
 
       // Writing at position 0 here so we need to jump by 129+255 to our next superblock
       block += 256;
@@ -250,6 +253,26 @@ int bv_destroy() {
   //Simply check to see if the filesystem was initialized correctly or not.
 
   if(INITIALIZED){
+    // We need to write down the current super block to file.
+    lseek(fsFD, 0, SEEK_SET);
+    write(fsFD, &current_super_block, sizeof(current_super_block));
+
+    // We also need to write down all the data that has changed in our currently used super block.
+    lseek(fsFD, (current_super_block-1)*512, SEEK_SET);
+
+    // Write down all the offsets
+    for(int i = 0; i < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); i++){
+      write(fsFD, &super_block.offsets[i], 2);
+    }
+
+    // Now write down the pointer to the next super block.
+    write(fsFD, &super_block.next, 2);
+
+    // Finally, write down all of our INode information to the file.
+    lseek(fsFD, 512, SEEK_SET);
+    write(fsFD, &INode_array, sizeof(INode_array));
+
+    // Close the file.
     close(fsFD);
     printf("Thank you for using bv_fs.");
     return 0;
