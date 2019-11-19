@@ -35,20 +35,15 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <time.h>
-
-/* To get local time.
-   time_t mytime;
-   mytime = time(NULL);
-   printf(ctime(&mytime));
-*/
+#include <string.h>
 
 /* BEGIN STRUCT STUFF */
 
 struct INode {
-  const char file_name[32];
+  char file_name[32];
   time_t time_stamp;
   int num_bytes;
-  short blocks[128];
+  short file_blocks[128];
 };
 
 struct SuperBlockInfo {
@@ -79,11 +74,16 @@ int FILE_SIZE = 65536;
 
 int INITIALIZED = 0;
 int fsFD;
-struct SuperBlockInfo *super_block;
+struct SuperBlockInfo super_block;
 short current_super_block;
 struct INode INode_array[256];
 const char *current_open_file;
 struct Cursor cursors[256];
+
+// Blank Stuff
+static const struct INode blank_INode;
+static const struct Cursor blank_cursor;
+static const struct SuperBlockInfo blank_super_block;
 
 // Prototypes
 int bv_init(const char *fs_fileName);
@@ -135,6 +135,7 @@ int bv_init(const char *fs_fileName) {
       read(fsFD, (void*)(&current_super_block), 2);
 
       // Go to the first super block and read it into memory.
+      short num;
       for(int j = 0; j < 256; j ++){
         // Read in the int at that location
         read(fsFD, (void *)(&num), sizeof(num));
@@ -179,6 +180,10 @@ int bv_init(const char *fs_fileName) {
     current_super_block = 257;
     write(fsFD, (short *)(&block), 2);
   
+    for(int i =0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
+      INode_array[i] = blank_INode;
+    }
+
     // Some information to help us with the blocks.
     short tracker;
     int loc = 0;
@@ -204,7 +209,6 @@ int bv_init(const char *fs_fileName) {
             super_block.is_empty = 0;
           }
         }
-
       }
 
       // Writing at position 0 here so we need to jump by 129+255 to our next superblock
@@ -307,7 +311,7 @@ int bv_open(const char *fileName, int mode) {
         // We need to find the next block that can be written to.
         int bytes = INode_array[i].num_bytes;
         int loc = 0;
-        for(int j = 0; j < sizeof(INode_array[i].blocks)/sizeof(INode_array[i].blocks[0]); j++){
+        for(int j = 0; j < sizeof(INode_array[i].file_blocks)/sizeof(INode_array[i].file_blocks[0]); j++){
           bytes -= 512;
           loc++;
         }
@@ -316,8 +320,8 @@ int bv_open(const char *fileName, int mode) {
         for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
           if(cursors[y].file_name == fileName){
             cursors[y].file_name = fileName;
-            cursors[y].block = INode_array[i].blocks[loc];
-            cursors[y].pos = (((INode_array[i].blocks[loc]-1)*512) + bytes);
+            cursors[y].block = INode_array[i].file_blocks[loc];
+            cursors[y].pos = (((INode_array[i].file_blocks[loc]-1)*512) + bytes);
             cursors[y].mode = mode;
             break;
           }
@@ -326,23 +330,23 @@ int bv_open(const char *fileName, int mode) {
         // Set the file for current open file.
         current_open_file = fileName;
 
-        return (((INode_array[i].blocks[loc]-1)*512) + bytes);
+        return (((INode_array[i].file_blocks[loc]-1)*512) + bytes);
       }
 
       // TRUNCATE MODE
       if(mode == 2){
         // Give back all of the blocks that are now empty.
-        short save = INode_array[i].blocks[0];
+        short save = INode_array[i].file_blocks[0];
 
-        for(int x = 1; x < sizeof(INode_array.blocks)/sizeof(INode_array.blocks[0]); x++){
+        for(int x = 1; x < sizeof(INode_array[i].file_blocks)/sizeof(INode_array[i].file_blocks[0]); x++){
 
-          if(INode_array.blocks[x] != 0){
+          if(INode_array[i].file_blocks[x] != 0){
             int flag = 0;
             for(int y = 0; y < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); y++){
               if(super_block.offsets[y] == 0){
                 flag = 1;
                 super_block.is_empty = 0;
-                super_block.offsets[y] = Inode_array.blocks[x];
+                super_block.offsets[y] = INode_array[i].file_blocks[x];
                 break;
               }
             }
@@ -352,18 +356,21 @@ int bv_open(const char *fileName, int mode) {
               lseek(fsFD, (current_super_block-1)*512, SEEK_SET);
 
               for(int z = 0; z < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); z++){
-                write(fsFD, super_block.offsets[z], 2);
+                write(fsFD, &super_block.offsets[z], 2);
               }
+
+              super_block = blank_super_block;
+
 
               super_block.next = current_super_block;
               super_block.is_empty = 1;
-              super_block.offsets = {0};
-              current_super_block = INode_array.blocks[x];
+              current_super_block = INode_array[i].file_blocks[x];
             }
           }
         }
 
-        INode_array[i].blocks[0] = save;
+        INode_array[i] = blank_INode;
+        INode_array[i].file_blocks[0] = save;
 
         // Create a cursor to go along with this file.
         for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
@@ -388,7 +395,7 @@ int bv_open(const char *fileName, int mode) {
   // At this point we've exhausted our INode_array and the file does not exist in our filesystem already
   // so lets create it and put it at the lowest INode.
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
-    if(INode_array[i].file_name == NULL){
+    if(sizeof(INode_array[i].file_name) == 0){
       // We've found the closest empty INode so lets put a file in there.
       // To do this we need to find the lowest empty block that we can write to.
       // That means loop through our super blocks till we found one!
@@ -405,13 +412,14 @@ int bv_open(const char *fileName, int mode) {
             return -1;
           }
 
-          INode_array[i].file_name = fileName;
-          INode_array[i].blocks = current_super_block;
+          strcpy(INode_array[i].file_name, fileName);
+          INode_array[i].file_blocks[0] = current_super_block;
           current_super_block = super_block.next;
 
           // Seek to the next super block and read it into memory.
           lseek(fsFD, (current_super_block-1)*512, SEEK_SET);
 
+          short num;
           for(int j = 0; j < 256; j ++){
             // Read in the int at that location
             read(fsFD, (void *)(&num), sizeof(num));
@@ -430,8 +438,8 @@ int bv_open(const char *fileName, int mode) {
           INode_array[i].time_stamp = mytime;
 
           // Now make sure the super block there is NULL so nothing else can write to it.
-          int fd = super_blocks[i].offsets[x];
-          super_blocks[i].offsets[x] = 0;
+          int fd = super_block.offsets[x];
+          super_block.offsets[x] = 0;
 
           // Create a cursor to go along with this file.
           for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
@@ -458,12 +466,12 @@ int bv_open(const char *fileName, int mode) {
             return -1;
           }
 
-          INode_array[i].file_name = fileName;
-          INode_array[i].blocks[0] = super_block.offsets[x];
+          strcpy(INode_array[i].file_name, fileName);
+          INode_array[i].file_blocks[0] = super_block.offsets[x];
 
           // Get the time_stamp
           time_t mytime = time(NULL);
-          INode_array[i].time_stamp = ctime(&mytime);
+          INode_array[i].time_stamp = mytime;
 
           // Now make sure the super block there is NULL so nothing else can write to it.
           int fd = super_block.offsets[x];
@@ -554,6 +562,7 @@ int bv_close(int bvfs_FD) {
  *           prior to returning.
  */
 int bv_write(int bvfs_FD, const void *buf, size_t count) {
+  /*
   int writtenBytes = 0;
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // Check to see if fileNames match.
@@ -636,7 +645,7 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
     }
   }
   return writtenBytes;
-  
+  */
 }
 
 
@@ -684,14 +693,14 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
           if(count>INode_array[i].num_bytes){
             int loc = 0;
             while(count>BLOCK_SIZE){
-              lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+              lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
               read(fsFD, buf, 512);
               count-=512;
               loc++;
               writtenBytes+=512;
             }
               //last time through, filling up the rest of count
-              lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+              lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
               read(fsFD, buf, count);
               writtenBytes+=count;
           }
@@ -700,14 +709,14 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
           else{
             int loc = 0;
             while(count>BLOCK_SIZE){
-              lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+              lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
               read(fsFD, buf, 512);
               count-=512;
               loc++;
               writtenBytes+=512;
             }
               //last time through, filling up the rest of count
-              lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+              lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
               read(fsFD, buf, INode_array[i].num_bytes-writtenBytes);
               writtenBytes+=(INode_array[i].num_bytes-writtenBytes);
             }
@@ -743,16 +752,16 @@ int bv_unlink(const char* fileName) {
 
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
 
-    if(INode_array.file_name == fileName){
-      for(int x = 0; x < sizeof(INode_array.blocks)/sizeof(INode_array.blocks[0]); x++){
+    if(INode_array[i].file_name == fileName){
+      for(int x = 0; x < sizeof(INode_array[i].file_blocks)/sizeof(INode_array[i].file_blocks[0]); x++){
 
-        if(INode_array.blocks[x] != 0){
+        if(INode_array[i].file_blocks[x] != 0){
           int flag = 0;
           for(int y = 0; y < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); y++){
             if(super_block.offsets[y] == 0){
               flag = 1;
               super_block.is_empty = 0;
-              super_block.offsets[y] = Inode_array.blocks[x];
+              super_block.offsets[y] = INode_array[i].file_blocks[x];
               break;
             }
           }
@@ -762,14 +771,25 @@ int bv_unlink(const char* fileName) {
             lseek(fsFD, (current_super_block-1)*512, SEEK_SET);
 
             for(int z = 0; z < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); z++){
-              write(fsFD, super_block.offsets[z], 2);
+              write(fsFD, &super_block.offsets[z], 2);
             }
+
+            super_block = blank_super_block;
 
             super_block.next = current_super_block;
             super_block.is_empty = 1;
-            super_block.offsets = {0};
-            current_super_block = INode_array.blocks[x];
+            current_super_block = INode_array[i].file_blocks[x];
           }
+        }
+      }
+      
+      INode_array[i] = blank_INode;
+
+      // Delete the cursor that goes along with this file.
+      for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
+        if(cursors[y].file_name == fileName){
+          cursors[y] = blank_cursor;
+          break;
         }
       }
 
@@ -820,7 +840,7 @@ void bv_ls() {
   // First for loop to find out how many files we have stored in the file system.
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to track it for the first print.
-    if(INode_array[i].file_name != NULL){
+    if(sizeof(INode_array[i].file_name) != 0){
       count++;
     }
   }
@@ -831,7 +851,7 @@ void bv_ls() {
   // Second for loop to print out all of the information for each file.
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to print out its info.
-    if(INode_array[i].file_name != NULL){
+    if(sizeof(INode_array[i].file_name) != 0){
       printf(" bytes: %d, blocks: %d, %.24s, %s\n", INode_array[i].num_bytes, INode_array[i].num_bytes/512, ctime(&INode_array[i].time_stamp), INode_array[i].file_name);
     }
   }
