@@ -57,6 +57,13 @@ struct SuperBlockInfo {
   short next;
 };
 
+struct Cursor {
+  char *fileName;
+  int pos;
+  int fileDescriptor;
+  int mode;
+}
+
 /* END STRUCT STUFF */
 
 
@@ -69,12 +76,13 @@ int FILENAME_SIZE = 32;
 int BLOCK_SIZE = 512;
 int PARTITION_SIZE = 8388608;
 int FILE_SIZE = 65536;
-char * GLOBAL_FILE = NULL;
 
 int INITIALIZED = 0;
 int fsFD;
 struct SuperBlockInfo super_blocks[64];
 struct INode INode_array[256];
+char *current_open_file;
+struct Cursor cursors[256];
 
 // Prototypes
 int bv_init(const char *fs_fileName);
@@ -117,7 +125,6 @@ int bv_init(const char *fs_fileName) {
 
   if(fsFD < 0){
     if(errno == EEXIST){
-      // TODO: The files already exists so initialize all the necessary datastructures.
 
       close(fsFD);
 
@@ -149,33 +156,11 @@ int bv_init(const char *fs_fileName) {
       }
 
       // Seek back to start of INodes and read in informattion to populate our array.
-      // Tip: If you read back a zero there is NO file there so you can populate 
-      // the array at that position with a brand new INode struct which is waiting for
-      // a file.
 
-      // Seek to the start of our INodes.
       lseek(fsFD, 512, SEEK_SET);
 
-      pos = 0;
       // Start reading in and filling up our INode array.
-      for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
-
-        //TODO: How do you read in a struct?
-        struct INode *temp_INode;
-        char *file_name;
-
-        read(fsFD, (void *)(&file_name), sizeof(file_name));
-
-        // If we read in a 0 here then we know we can just push in a 
-        if(file_name == 0){
-          INode_array[pos] = *temp_INode;
-        } else {
-          //TODO
-          // If we get to here we know there is an INode there that needs to be populated into our array.
-
-        }
-        pos++;
-      }
+      read(fsFD, &INode_array, sizeof(INode_array));
 
       // File system was initialized correctly.
       INITIALIZED = 1;
@@ -220,15 +205,6 @@ int bv_init(const char *fs_fileName) {
     loc++;
     block = 512;
 
-    // Possibly need to revisit!
-    // Write the INode array to file
-    /*
-    for(int z = 0; z < 256; z++){
-      write(fsFD, (void *)(&INode_array[z]), sizeof(INode_array[z]));
-      lseek(fsFD, z+2*BLOCK_SIZE, SEEK_SET);
-    }
-    */
-      
     lseek(fsFD, 511*BLOCK_SIZE, SEEK_SET);
 
     // Outer loop goes through all necessary superblocks
@@ -345,6 +321,7 @@ int bv_open(const char *fileName, int mode) {
       // Maybe we should just return the byte that we need to seek to as the file descriptor. That would make it
       // Easier to deal with.
 
+      // CONCAT MODE
       if(mode == 1){
         // We need to find the next block that can be written to.
         int bytes = INode_array[i].num_bytes;
@@ -353,10 +330,25 @@ int bv_open(const char *fileName, int mode) {
           bytes -= 512;
           loc++;
         }
+
+        // Create a cursor to go along with this file.
+        for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
+          if(cursors[y].file_name == fileName){
+            cursors[y].file_name = fileName;
+            cursors[y].file_descriptor = (fd-1)*512;
+            cursors[y].pos = (((INode_array[i].blocks[loc]-1)*512) + bytes);
+            cursors[y].mode = mode;
+            break;
+          }
+        }
         
+        // Set the file for current open file.
+        current_open_file = fileName;
+
         return (((INode_array[i].blocks[loc]-1)*512) + bytes);
       }
-      
+
+      // TRUNCATE MODE
       if(mode == 2){
         // THIS IS BAD. We are never giving back the freed up space to our super blocks.
         // Idea of how to do this. subtrack the lowest super block from the block that needs to
@@ -366,6 +358,20 @@ int bv_open(const char *fileName, int mode) {
         INode_array[i].blocks = NULL;
 
         INode_array[i].blocks[0] = save;
+
+        // Create a cursor to go along with this file.
+        for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
+          if(cursors[y].file_name == fileName){
+            cursors[y].file_name = fileName;
+            cursors[y].file_descriptor = (fd-1)*512;
+            cursors[y].pos = (fd-1)*512;
+            cursors[y].mode = mode;
+            break;
+          }
+        }
+
+        // Set the file for current open file.
+        current_open_file = fileName;
 
         return (save-1)*512;
 
@@ -382,7 +388,7 @@ int bv_open(const char *fileName, int mode) {
       // That means loop through our super blocks till we found one!
 
       // Outer loop to go through our super block array.
-      for(int j = 0; j < sizeof(super_blocks)/sizeof(super_blocks[0]); j++){
+      for(int j = 1; j < sizeof(super_blocks)/sizeof(super_blocks[0]); j++){
 
         // Inner loop to go through our offset array in each super block.
         for(int x = 0; x < sizeof(super_blocks[j].offsets)/sizeof(super_blocks[j].offsets[0]); x++){
@@ -405,6 +411,20 @@ int bv_open(const char *fileName, int mode) {
             // Now make sure the super block there is NULL so nothing else can write to it.
             int fd = super_blocks[i].offsets[x];
             super_blocks[i].offsets[x] = 0;
+
+            // Create a cursor to go along with this file.
+            for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
+              if(cursors[y].file_name == NULL){
+                cursors[y].file_name = fileName;
+                cursors[y].file_descriptor = (fd-1)*512;
+                cursors[y].pos = (fd-1)*512;
+                cursors[y].mode = mode;
+                break;
+              }
+            }
+
+            // Set the file for current open file.
+            current_open_file = fileName;
 
             return (fd-1)*512;
           }
@@ -499,45 +519,57 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
  *           prior to returning.
  */
 int bv_read(int bvfs_FD, void *buf, size_t count) {
-  //TODO:Make file descriptor global variable so
   //we can check if it is open (return appropriate error)
   int writtenBytes=0;
   //finding which file to read
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // Check to see if fileNames match.
-    if(INode_array[i].file_name == GLOBAL_FILE){
+    if(INode_array[i].file_name == current_open_file){
       //case for if there is more space in our file compared to
       //how much we want to read into buffer
-      if(count>INode_array[i].num_bytes){
-        int loc = 0;
-        while(count>BLOCK_SIZE){
-          lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
-          read(fsFD, buf, 512);
-          count-=512;
-          loc++;
-          writtenBytes+=512;
+
+      // Check to see where the cursor is at and if it is in read mode
+      for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
+        if(cursors[y].file_name == current_open_file){
+          if(cursors[y].mode != BV_RDONLY){
+            fprintf(stderr, "File is not open in read mode.");
+            return -1;
+          }
+
+          // TODO Check if this needs to be changes.
+
+          if(count>INode_array[i].num_bytes){
+            int loc = 0;
+            while(count>BLOCK_SIZE){
+              lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+              read(fsFD, buf, 512);
+              count-=512;
+              loc++;
+              writtenBytes+=512;
+            }
+              //last time through, filling up the rest of count
+              lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+              read(fsFD, buf, count);
+              writtenBytes+=count;
+          }
+          //the case for if we are asking for more bytes than we have in file 
+          //to be read to the buffer
+          else{
+            int loc = 0;
+            while(count>BLOCK_SIZE){
+              lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+              read(fsFD, buf, 512);
+              count-=512;
+              loc++;
+              writtenBytes+=512;
+            }
+              //last time through, filling up the rest of count
+              lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
+              read(fsFD, buf, INode_array[i].num_bytes-writtenBytes);
+              writtenBytes+=(INode_array[i].num_bytes-writtenBytes);
+            }
+          }
         }
-          //last time through, filling up the rest of count
-          lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
-          read(fsFD, buf, count);
-          writtenBytes+=count;
-      }
-      //the case for if we are asking for more bytes than we have in file 
-      //to be read to the buffer
-      else{
-        int loc = 0;
-        while(count>BLOCK_SIZE){
-          lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
-          read(fsFD, buf, 512);
-          count-=512;
-          loc++;
-          writtenBytes+=512;
-        }
-          //last time through, filling up the rest of count
-          lseek(fsFD, (INode_array[i].blocks[loc]-1)*512, SEEK_SET);
-          read(fsFD, buf, INode_array[i].num_bytes-writtenBytes);
-          writtenBytes+=(INode_array[i].num_bytes-writtenBytes);
-      }
       }
     }
   return writtenBytes;
