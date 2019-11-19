@@ -58,9 +58,9 @@ struct SuperBlockInfo {
 };
 
 struct Cursor {
-  char *fileName;
+  char *file_name;
   int pos;
-  int fileDescriptor;
+  int block;
   int mode;
 }
 
@@ -335,7 +335,7 @@ int bv_open(const char *fileName, int mode) {
         for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
           if(cursors[y].file_name == fileName){
             cursors[y].file_name = fileName;
-            cursors[y].file_descriptor = (fd-1)*512;
+            cursors[y].block = INode_array[i].blocks[loc];
             cursors[y].pos = (((INode_array[i].blocks[loc]-1)*512) + bytes);
             cursors[y].mode = mode;
             break;
@@ -363,7 +363,7 @@ int bv_open(const char *fileName, int mode) {
         for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
           if(cursors[y].file_name == fileName){
             cursors[y].file_name = fileName;
-            cursors[y].file_descriptor = (fd-1)*512;
+            cursors[y].block = save;
             cursors[y].pos = (fd-1)*512;
             cursors[y].mode = mode;
             break;
@@ -416,7 +416,7 @@ int bv_open(const char *fileName, int mode) {
             for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
               if(cursors[y].file_name == NULL){
                 cursors[y].file_name = fileName;
-                cursors[y].file_descriptor = (fd-1)*512;
+                cursors[y].block = fd;
                 cursors[y].pos = (fd-1)*512;
                 cursors[y].mode = mode;
                 break;
@@ -494,6 +494,85 @@ int bv_close(int bvfs_FD) {
  *           prior to returning.
  */
 int bv_write(int bvfs_FD, const void *buf, size_t count) {
+  int writtenBytesi = 0;
+  for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
+    // Check to see if fileNames match.
+    if(INode_array[i].file_name == current_open_file){
+      //case for if there is more space in our file compared to
+      //how much we want to read into buffer
+
+      // Check to see where the cursor is at and if it is in read mode
+      for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
+        if(cursors[y].file_name == current_open_file){
+          if(cursors[y].mode != BV_RDONLY){
+            fprintf(stderr, "File is not open in read mode.");
+            return -1;
+          }
+
+          // Seek to where the cursor is.
+          lseek(fsFD, cursors[y].pos, SEEK_SET);
+
+          // Begin to write
+          // Make sure to check if you are going over the block size (or amount you have left
+          // in the block) and if we have enough room.
+
+          // In this case we have enough room to write without overflowing to a new block.
+          if(((cursors[y].block-1)*512 - cursors[y].pos) >= count){
+            write(fsFd, buf, count);
+            writeenBytes += count;
+          } else {
+            // Lets to the first time for the "rest" of the block even if it is the start.
+            // That way we know by the time we get to the while loop we are working with full block sizes.
+
+
+            int location = 0;
+            // Ask backman if this is gonna work. Is buf going to keep our position to let us continue writing?
+            // Or do we need a notion of a cursor for that?
+
+            location += ((cursors[y].block-1)*512 - cursors[y].pos);
+            write(fsFD, buf+location, location);
+            count -= location;
+
+            while(count > 0){
+              // Aquire a new block.
+              // Outer loop to go through our super block array.
+              for(int j = 1; j < sizeof(super_blocks)/sizeof(super_blocks[0]); j++){
+
+                // Inner loop to go through our offset array in each super block.
+                for(int x = 0; x < sizeof(super_blocks[j].offsets)/sizeof(super_blocks[j].offsets[0]); x++){
+
+                  // This means that there is empty space at this offset!
+                  if(super_blocks[j].offsets[x] != 0){
+                    int new_block = super_blocks[j].offsets[x];
+
+                    // TODO put the block in the blocks of the INode.
+
+                    // Write over the super block to make sure it's null.
+
+                  }
+                }
+              }
+              // Seek to the begining of that new block.
+              lseek(fsFD, (new_block-1)*512, SEEK_SET);
+
+              // Write to it.
+              if(count > 512){
+                write(fsFD, buf+location, 512);
+                location += 512;
+              } else {
+                write(fsFD, buf+location, count);
+                location += count;
+              }
+
+              count -= 512;
+            }
+          }
+        }
+      }
+    }
+  }
+  return writtenBytes;
+  
 }
 
 
