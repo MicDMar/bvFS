@@ -350,7 +350,7 @@ int bv_open(const char *fileName, int mode) {
 
       // TRUNCATE MODE
       if(mode == 2){
-        // THIS IS BAD. We are never giving back the freed up space to our super blocks.
+        // TODO THIS IS BAD. We are never giving back the freed up space to our super blocks.
         // Idea of how to do this. subtrack the lowest super block from the block that needs to
         // be freed. Then multiply the remainder by 2 to get to the specific byte that you need to rewrite over
         // with a number.
@@ -394,6 +394,9 @@ int bv_open(const char *fileName, int mode) {
         for(int x = 0; x < sizeof(super_blocks[j].offsets)/sizeof(super_blocks[j].offsets[0]); x++){
 
           // This means that there is empty space at this offset!
+          // TODO what if there isn't an empty space? We need to go back through and
+          // Check our first super block.
+          // Also what if one of the super blocks is now empty? We need to free that block up.
           if(super_blocks[j].offsets[x] != 0){
             //check to make sure fileName is not greater than 32 bytes.
             if(sizeof(*(fileName))>31){
@@ -542,6 +545,9 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
                 for(int x = 0; x < sizeof(super_blocks[j].offsets)/sizeof(super_blocks[j].offsets[0]); x++){
 
                   // This means that there is empty space at this offset!
+                  // TODO what if there isn't an empty space? We need to go back through and
+                  // Check our first super block.
+                  // Also what if one of the super blocks is now empty? We need to free that block up.
                   if(super_blocks[j].offsets[x] != 0){
                     int new_block = super_blocks[j].offsets[x];
 
