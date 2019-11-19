@@ -54,6 +54,7 @@ struct SuperBlockInfo {
 
 struct Cursor {
   const char *file_name;
+  short file_block;
   int pos;
   int block;
   int mode;
@@ -323,6 +324,7 @@ int bv_open(const char *fileName, int mode) {
             cursors[y].block = INode_array[i].file_blocks[loc];
             cursors[y].pos = (((INode_array[i].file_blocks[loc]-1)*512) + bytes);
             cursors[y].mode = mode;
+            cursors[y].file_block = i;
             break;
           }
         }
@@ -379,6 +381,7 @@ int bv_open(const char *fileName, int mode) {
             cursors[y].block = save;
             cursors[y].pos = (save-1)*512;
             cursors[y].mode = mode;
+            cursors[y].file_block = i;
             break;
           }
         }
@@ -536,7 +539,15 @@ int bv_open(const char *fileName, int mode) {
  *           prior to returning.
  */
 int bv_close(int bvfs_FD) {
-}
+    for(int i = 0; i < sizeof(cursors)/sizeof(cursors[0]); i++){
+      if(current_open_file==cursors[i].file_name){
+        current_open_file='\0';
+        return 0;
+      }
+    }
+    fprintf(stderr, "File not previously opened bia bv_open");
+    return -1;
+  }
 
 
 
@@ -714,37 +725,74 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
             return -1;
           }
 
-          // TODO Check if this needs to be changes.
-
-          if(count>INode_array[i].num_bytes){
-            int loc = 0;
-            while(count>BLOCK_SIZE){
-              lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
-              read(fsFD, buf, 512);
-              count-=512;
-              loc++;
-              writtenBytes+=512;
+          //TODO Check if this needs to be changes.
+          
+          //seek to where cursor is
+          //would our cursor be at the start of a block? 
+          lseek(fsFD, cursors[y].pos, SEEK_SET);
+          //if our count is asking for more bytes than we have in file
+          int maxBytes = INode_array[i].num_bytes;
+          if(count>maxBytes){
+            int loc = cursors[y].file_block;
+            int flag = 0;
+            while(count>BLOCK_SIZE && writtenBytes<maxBytes){
+              //do we need to check here if we try to read in more bytes than
+              //we actually have?  
+              //second time seek
+              if(flag==1){
+                lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
+              }
+              //first time read
+              if(flag==0){
+                read(fsFD, buf, (((cursors[y].block+1)*512)-cursors[y].pos));
+                writtenBytes+=(((cursors[y].block+1)*512)-cursors[y].pos);
+                count-=(((cursors[y].block+1)*512)-cursors[y].pos);
+                loc++;
+              }
+              else{
+                read(fsFD, buf, 512);
+                count-=512;
+                loc++;
+                writtenBytes+=512;
+              }
+              flag=1;
             }
               //last time through, filling up the rest of count
+              //if there is still room for bytes to write
               lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
-              read(fsFD, buf, count);
+              read(fsFD, buf, (maxBytes-writtenBytes));
               writtenBytes+=count;
+              return writtenBytes;
           }
-          //the case for if we are asking for more bytes than we have in file 
+          //the case for if we are asking for less bytes than we have in file 
           //to be read to the buffer
+          //this should be fine? 
           else{
-            int loc = 0;
-            while(count>BLOCK_SIZE){
-              lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
-              read(fsFD, buf, 512);
-              count-=512;
-              loc++;
-              writtenBytes+=512;
+            int loc = cursors[y].file_block;
+            int flag = 0;
+            while(count>BLOCK_SIZE && writtenBytes<maxBytes){
+              //if you have less bytes than what is inbetween cursor position
+              //and start of block
+              if(flag=0){
+                if(maxBytes<((cursors[y].block+1)*512)-cursors[y].pos){
+                  read(fsFD, buf, maxBytes);
+                  return maxBytes;
+                }
+              }
+              if(flag==1){ 
+                lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
+                read(fsFD, buf, 512);
+                count-=512;
+                loc++;
+                writtenBytes+=512;
+              }
+              flag=1;
             }
               //last time through, filling up the rest of count
               lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
-              read(fsFD, buf, INode_array[i].num_bytes-writtenBytes);
-              writtenBytes+=(INode_array[i].num_bytes-writtenBytes);
+              read(fsFD, buf, (maxBytes-writtenBytes));
+              writtenBytes+=(maxBytes-writtenBytes);
+              return writtenBytes;
             }
           }
         }
