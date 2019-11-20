@@ -1092,7 +1092,7 @@ void bv_ls() {
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to print out its info.
     if(strcmp(INode_array[i].file_name, "\0") != 0){
-      printf(" bytes: %d, blocks: %d, %.24s, %s\n", INode_array[i].num_bytes, ceil(INode_array[i].num_bytes/512), ctime(&INode_array[i].time_stamp), INode_array[i].file_name);
+      printf(" bytes: %d, blocks: %f, %.24s, %s\n", INode_array[i].num_bytes, ceil(INode_array[i].num_bytes/512), ctime(&INode_array[i].time_stamp), INode_array[i].file_name);
     }
   }
 
