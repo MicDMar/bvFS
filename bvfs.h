@@ -725,11 +725,11 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
             location += ((cursors[y].block-1)*512 - cursors[y].pos);
 
             if(location == 0){
-              write(fsFD, buf+location, 512);
+              write(fsFD, buf, 512);
               writtenBytes += 512;
               check -= 512;
             } else {
-              write(fsFD, buf+location, location);
+              write(fsFD, buf, location);
               writtenBytes += location;
               check -= location;
             }
