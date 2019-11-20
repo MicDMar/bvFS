@@ -78,7 +78,7 @@ int fsFD;
 struct SuperBlockInfo super_block;
 short current_super_block;
 struct INode INode_array[256];
-const char *current_open_file;
+const char *current_open_file = (const char *)'\0';
 struct Cursor cursors[256];
 
 // Blank Stuff
@@ -136,6 +136,8 @@ int bv_init(const char *fs_fileName) {
       read(fsFD, (void*)(&current_super_block), 2);
 
       // Go to the first super block and read it into memory.
+      lseek(fsFD, (current_super_block-1)*512, SEEK_SET);
+
       short num;
       for(int j = 0; j < 256; j ++){
         // Read in the int at that location
@@ -186,6 +188,12 @@ int bv_init(const char *fs_fileName) {
       INode_array[i] = blank_INode;
     }
 
+    // Make our Cursor array with blank Cursor structs.
+    for(int i =0; i < sizeof(cursors)/sizeof(cursors); i++){
+      cursors[i] = blank_cursor;
+    }
+
+
     // Some information to help us with the blocks.
     short tracker;
     int loc = 0;
@@ -199,7 +207,8 @@ int bv_init(const char *fs_fileName) {
       for(short x = 1; x < 256; x++){
         tracker = block+x;
         write(fsFD, (void *)(&tracker), 2);
-        printf("Writing: %d\n", tracker);
+        // DEBUG OUTPUT
+        //printf("Writing: %d\n", tracker);
         if(loc == 0) { super_block.offsets[x] = tracker; }
 
         // Last 2 bytes before block end goes to next superblock
@@ -213,12 +222,23 @@ int bv_init(const char *fs_fileName) {
         }
       }
 
-
-
       // Writing at position 0 here so we need to jump by 129+255 to our next superblock
       block += 256;
       loc = 1;
       lseek(fsFD, (block-1)*BLOCK_SIZE, SEEK_SET);
+    }
+
+    // Initialize our first super block to use here.
+    lseek(fsFD, (current_super_block-1)*512, SEEK_SET);
+
+    short num;
+    for(int j = 0; j < 256; j ++){
+      // Read in the int at that location
+      read(fsFD, (void *)(&num), sizeof(num));
+
+      // Push that int into the specified position in the specific location in the super_blocks array.
+      super_block.offsets[j] = num;
+      //printf("%d\n", super_block.offsets[j]);
     }
 
     // File system was initialized correctly.
@@ -227,6 +247,8 @@ int bv_init(const char *fs_fileName) {
     return 0;
   }
 
+  fprintf(stderr, "Don't know how you got here. But you should be here.");
+  return -1;
 }
 
 
@@ -321,11 +343,11 @@ int bv_open(const char *fileName, int mode) {
   /* Search through our INodes for the fileName in there.
      If we find it then we can "open" the file and write bytes to it where it lives
      otherwise we need to allocate a new INode with file information to use. */
-
+  
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
 
     // Check to see if fileNames match.
-    if(INode_array[i].file_name == fileName){
+    if(strcmp(INode_array[i].file_name, fileName) == 0){
       // We've found the file which lives at this INode. We need to return a file descriptor to write to it.
       // Maybe we should just return the byte that we need to seek to as the file descriptor. That would make it
       // Easier to deal with.
@@ -420,14 +442,21 @@ int bv_open(const char *fileName, int mode) {
 
   // At this point we've exhausted our INode_array and the file does not exist in our filesystem already
   // so lets create it and put it at the lowest INode.
+
+  if(mode == 0){
+    fprintf(stderr, "File opened in BV_RDONLY mode. No file created.");
+    return -1;
+  }
+
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
-    if(sizeof(INode_array[i].file_name) == 0){
+    if(INode_array[i].time_stamp == 0){
       // We've found the closest empty INode so lets put a file in there.
       // To do this we need to find the lowest empty block that we can write to.
       // That means loop through our super blocks till we found one!
 
       // Go through our offset array in each super block.
       for(int x = 0; x < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); x++){
+      //printf("%d\n", super_block.offsets[x]);
 
         // This means that there is empty space at this offset!
         if(super_block.is_empty == 1){
@@ -484,6 +513,7 @@ int bv_open(const char *fileName, int mode) {
           return (fd-1)*512;
          
         }
+
 
         else if(super_block.offsets[x] != 0){
           //check to make sure fileName is not greater than 32 bytes.
@@ -562,13 +592,20 @@ int bv_open(const char *fileName, int mode) {
  *           prior to returning.
  */
 int bv_close(int bvfs_FD) {
+
+    if(current_open_file == (const char *) '\0'){
+      fprintf(stderr, "File not perviously openend via bv_open");
+      return -1;
+    }
+
     for(int i = 0; i < sizeof(cursors)/sizeof(cursors[0]); i++){
-      if(current_open_file==cursors[i].file_name){
-        current_open_file='\0';
+      if(current_open_file == cursors[i].file_name){
+        current_open_file = (const char *)'\0';
         return 0;
       }
     }
-    fprintf(stderr, "File not previously opened bia bv_open");
+
+    fprintf(stderr, "File not previously opened via bv_open");
     return -1;
   }
 
@@ -597,31 +634,42 @@ int bv_close(int bvfs_FD) {
  */
 int bv_write(int bvfs_FD, const void *buf, size_t count) {
   int writtenBytes = 0;
+  int check = count;
+
+  //printf("Made it to write.\n");
+
+
+  printf("%s\n", current_open_file);
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // Check to see if fileNames match.
-    if(INode_array[i].file_name == current_open_file){
+    //printf("%s\n", INode_array[i].file_name);
+    if(strcmp(INode_array[i].file_name, current_open_file) == 0){
+      //printf("Found our file.\n");
+      
       //case for if there is more space in our file compared to
       //how much we want to read into buffer
 
       // Check to see where the cursor is at and if it is in read mode
       for(int y = 0; y < sizeof(cursors)/sizeof(cursors[0]); y++){
         if(cursors[y].file_name == current_open_file){
-          if(cursors[y].mode != BV_RDONLY){
-            fprintf(stderr, "File is not open in read mode.");
+          if(cursors[y].mode == BV_RDONLY){
+            fprintf(stderr, "File is open in read mode.");
             return -1;
           }
-
+          
           // Seek to where the cursor is.
           lseek(fsFD, cursors[y].pos, SEEK_SET);
+
+          //printf("%d", cursors[y].pos);
 
           // Begin to write
           // Make sure to check if you are going over the block size (or amount you have left
           // in the block) and if we have enough room.
 
           // In this case we have enough room to write without overflowing to a new block.
-          if(((cursors[y].block-1)*512 - cursors[y].pos) >= count){
-            write(fsFD, buf, count);
-            writtenBytes += count;
+          if(((cursors[y].block-1)*512 - cursors[y].pos) >= check){
+            write(fsFD, buf, check);
+            writtenBytes += check;
           } else {
             // Lets to the first time for the "rest" of the block even if it is the start.
             // That way we know by the time we get to the while loop we are working with full block sizes.
@@ -633,9 +681,11 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
 
             location += ((cursors[y].block-1)*512 - cursors[y].pos);
             write(fsFD, buf+location, location);
-            count -= location;
+            writtenBytes += location;
+            check -= location;
 
-            while(count > 0){
+            while(check > 0){
+              //printf("%d\n", check);
               int new_block = 0;
               // Aquire a new block.
 
@@ -692,19 +742,24 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
               // Write to it.
               if(count > 512){
                 write(fsFD, buf+location, 512);
+                writtenBytes += 512;
                 location += 512;
               } else {
-                write(fsFD, buf+location, count);
-                location += count;
+                write(fsFD, buf+location, check);
+                writtenBytes += check;
+                location += check;
               }
 
-              count -= 512;
+              //printf("%d\n", new_block);
+              check -= 512;
             }
           }
         }
       }
     }
   }
+
+  printf("%d\n", writtenBytes);
   return writtenBytes;
 }
 
@@ -796,13 +851,13 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
             while(count>BLOCK_SIZE && writtenBytes<maxBytes){
               //if you have less bytes than what is inbetween cursor position
               //and start of block
-              if(flag=0){
+              if(flag == 0){
                 if(maxBytes<((cursors[y].block+1)*512)-cursors[y].pos){
                   read(fsFD, buf, maxBytes);
                   return maxBytes;
                 }
               }
-              if(flag==1){ 
+              if(flag == 1){ 
                 lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
                 read(fsFD, buf, 512);
                 count-=512;
@@ -938,7 +993,7 @@ void bv_ls() {
   // First for loop to find out how many files we have stored in the file system.
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to track it for the first print.
-    if(sizeof(INode_array[i].file_name) != 0){
+    if(INode_array[i].time_stamp == 0){
       count++;
     }
   }
@@ -949,7 +1004,7 @@ void bv_ls() {
   // Second for loop to print out all of the information for each file.
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to print out its info.
-    if(sizeof(INode_array[i].file_name) != 0){
+    if(INode_array[i].time_stamp == 0){
       printf(" bytes: %d, blocks: %d, %.24s, %s\n", INode_array[i].num_bytes, INode_array[i].num_bytes/512, ctime(&INode_array[i].time_stamp), INode_array[i].file_name);
     }
   }
