@@ -60,6 +60,8 @@ struct Cursor {
   int pos;
   int block;
   int mode;
+  int is_open;
+  int fd;
 };
 
 /* END STRUCT STUFF */
@@ -385,6 +387,8 @@ int bv_open(const char *fileName, int mode) {
               cursors[y].file_block = 0;
             }
 
+            cursors[y].fd = (((INode_array[i].file_blocks[loc]-1)*512) + bytes);
+            cursors[y].is_open = 1;
             cursors[y].mode = mode;
             break;
           }
@@ -448,6 +452,8 @@ int bv_open(const char *fileName, int mode) {
             cursors[y].pos = (save-1)*512;
             cursors[y].mode = mode;
             cursors[y].file_block = 0;
+            cursors[y].is_open = 1;
+            cursors[y].fd = (save-1)*512;
             break;
           }
         }
@@ -524,6 +530,8 @@ int bv_open(const char *fileName, int mode) {
               cursors[y].block = fd;
               cursors[y].pos = (fd-1)*512;
               cursors[y].mode = mode;
+              cursors[y].is_open = 1;
+              cursors[y].fd = (fd-1)*512;
               break;
             }
           }
@@ -566,6 +574,8 @@ int bv_open(const char *fileName, int mode) {
               cursors[y].block = fd;
               cursors[y].pos = (fd-1)*512;
               cursors[y].mode = mode;
+              cursors[y].is_open = 1;
+              cursors[y].fd = (fd-1)*512;
               break;
             }
           }
@@ -622,6 +632,7 @@ int bv_close(int bvfs_FD) {
     for(int i = 0; i < sizeof(cursors)/sizeof(cursors[0]); i++){
       if(current_open_file == cursors[i].file_name){
         current_open_file = (const char *)'\0';
+        cursors[i].is_open = 0;
         return 0;
       }
     }
@@ -656,11 +667,20 @@ int bv_close(int bvfs_FD) {
 int bv_write(int bvfs_FD, const void *buf, size_t count) {
   int writtenBytes = 0;
   int check = count;
+  
+  // check to see if our file is open.
+  for(int i = 0; i < sizeof(cursors)/sizeof(cursors[0]); i++){
+    if(cursors[i].fd == bvfs_FD){
+      if(cursors[i].is_open == 1){
+        current_open_file = cursors[i].file_name;
+      } else {
+        fprintf(stderr, "That file is not open.");
+        return -1;
+      }
+    }
+  }
 
-  //printf("Made it to write.\n");
 
-
-  printf("%s\n", current_open_file);
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // Check to see if fileNames match.
     //printf("%s\n", INode_array[i].file_name);
@@ -832,6 +852,19 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
   //we can check if it is open (return appropriate error)
   int writtenBytes=0;
   int check = count;
+
+  // check to see if our file is open.
+  for(int i = 0; i < sizeof(cursors)/sizeof(cursors[0]); i++){
+    if(cursors[i].pos == bvfs_FD){
+      if(cursors[i].is_open == 1){
+        current_open_file = cursors[i].file_name;
+      } else {
+        fprintf(stderr, "That file is not open.");
+        return -1;
+      }
+    }
+  }
+
   //finding which file to read
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // Check to see if fileNames match.
@@ -1092,7 +1125,7 @@ void bv_ls() {
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // There is a file stored in this INode so we need to print out its info.
     if(strcmp(INode_array[i].file_name, "\0") != 0){
-      printf(" bytes: %d, blocks: %d, %.24s, %s\n", INode_array[i].num_bytes, ceil(INode_array[i].num_bytes/512), ctime(&INode_array[i].time_stamp), INode_array[i].file_name);
+      printf(" bytes: %d, blocks: %f, %.24s, %s\n", INode_array[i].num_bytes, ceil((float)INode_array[i].num_bytes/512), ctime(&INode_array[i].time_stamp), INode_array[i].file_name);
     }
   }
 
