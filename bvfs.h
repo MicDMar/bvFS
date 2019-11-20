@@ -380,7 +380,7 @@ int bv_open(const char *fileName, int mode) {
               cursors[y].pos = (((INode_array[i].file_blocks[loc]-1)*512) + bytes);
               cursors[y].file_block = i;
             } else {
-              cursors[y].pos = (((INode_array[i].file_blocks[loc]-1)*512));
+              cursors[y].pos = (((INode_array[i].file_blocks[0]-1)*512));
               cursors[y].file_block = 0;
             }
 
@@ -702,11 +702,18 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
             // Or do we need a notion of a cursor for that?
 
             location += ((cursors[y].block-1)*512 - cursors[y].pos);
-            write(fsFD, buf+location, location);
-            writtenBytes += location;
-            check -= location;
 
-            while(check > 0){
+            if(location == 0){
+              write(fsFD, buf+location, 512);
+              writtenBytes += 512;
+              check -= 512;
+            } else {
+              write(fsFD, buf+location, location);
+              writtenBytes += location;
+              check -= location;
+            }
+
+            while(check >= 0){
               //printf("%d\n", check);
               int new_block = 0;
               // Aquire a new block.
@@ -750,11 +757,17 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
                   new_block = super_block.offsets[x];
                   super_block.offsets[x] = 0;
 
+                  int too_much = 1;
                   for(int z = 0; z < sizeof(INode_array[i].file_blocks)/sizeof(INode_array[i].file_blocks[0]); z++){
                     if(INode_array[i].file_blocks[z] == 0){
                       INode_array[i].file_blocks[z] = new_block;
+                      too_much = 0;
                       break;
                     }
+                  }
+                  if(too_much == 1){
+                    fprintf(stderr, "File size too big.");
+                    return -1;
                   }
                   break;
                 }
@@ -767,17 +780,20 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
               if(check > 512){
                 write(fsFD, buf+location, 512);
                 writtenBytes += 512;
-                INode_array[i].num_bytes += 512;
                 location += 512;
               } else {
                 write(fsFD, buf+location, check);
                 writtenBytes += check;
-                INode_array[i].num_bytes += writtenBytes;
                 location += check;
               }
 
-              //printf("%d\n", new_block);
               check -= 512;
+              printf("%d\n", check);
+              
+              if(check <= 0){
+                INode_array[i].num_bytes += writtenBytes;
+                return writtenBytes;
+              }
             }
           }
         }
@@ -838,11 +854,11 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
           //if our count is asking for more bytes than we have in file
           int maxBytes = INode_array[i].num_bytes;
           int cursor_offset = cursors[y].pos - (INode_array[i].file_blocks[cursors[y].file_block]-1)*512;
-          printf("%d\n", cursors[y].pos);
-          printf("%d\n", (INode_array[i].file_blocks[cursors[y].file_block]-1)*512);
+          //printf("%d\n", cursors[y].pos);
+          //printf("%d\n", (INode_array[i].file_blocks[cursors[y].file_block]-1)*512);
 
-          printf("%d\n", cursor_offset);
-          printf("%d\n", maxBytes);
+          //printf("%d\n", cursor_offset);
+          //printf("%d\n", maxBytes);
           if(maxBytes - cursor_offset == 0){
             fprintf(stderr, "Nothing left to read.");
             return -1;
