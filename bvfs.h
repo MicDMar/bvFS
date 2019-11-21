@@ -378,6 +378,7 @@ int bv_open(const char *fileName, int mode) {
             } else {
               cursors[y].pos = (((INode_array[i].file_blocks[0]-1)*512));
               cursors[y].file_block = 0;
+              cursors[y].block = INode_array[i].file_blocks[0];
             }
 
             cursors[y].fd = (((INode_array[i].file_blocks[loc]-1)*512) + bytes);
@@ -924,7 +925,7 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
                 check-=512;
                 loc++;
                 writtenBytes+=512;
-                bufLoc+=writtenBytes;
+                bufLoc+=512;
               }
               flag=1;
             }
@@ -941,8 +942,8 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
               //last time through, filling up the rest of count
               //if there is still room for bytes to write
               lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512 + cursor_offset, SEEK_SET);
-              read(fsFD, buf+bufLoc, (maxBytes-writtenBytes));
-              cursors[y].pos = ((INode_array[i].file_blocks[loc]-1)*512) + (maxBytes-writtenBytes);
+              read(fsFD, buf+bufLoc, check);
+              cursors[y].pos = ((INode_array[i].file_blocks[loc]-1)*512) + check;
               writtenBytes+=check;
               bufLoc+=writtenBytes;
               return writtenBytes;
@@ -956,12 +957,19 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
             int flag = 0;
             while(check>BLOCK_SIZE && writtenBytes<maxBytes){
               //if you have less bytes than what is inbetween cursor position
-              //and start of block
+              //and end of block
               if(flag == 0){
-                if(maxBytes < ((cursors[y].block+1)*512)-cursors[y].pos){
+                if(maxBytes < ((cursors[y].block)*512) - cursors[y].pos){
                   read(fsFD, buf+bufLoc, maxBytes);
                   cursors[y].pos += maxBytes;
                   return maxBytes;
+                } else {
+                  // We need to make sure we write to the end of the block.
+                  read(fsFD, buf+bufLoc, ((cursors[y].block)*512) - cursors[y].pos);
+                  loc++;
+                  check -= ((cursors[y].block)*512) - cursors[y].pos;
+                  writtenBytes += ((cursors[y].block)*512) - cursors[y].pos;
+                  bufLoc += ((cursors[y].block)*512) - cursors[y].pos;
                 }
               }
               if(flag == 1){ 
@@ -970,7 +978,7 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
                 check-=512;
                 loc++;
                 writtenBytes+=512;
-                bufLoc+=writtenBytes;
+                bufLoc+=512;
               }
               flag=1;
             }
@@ -991,9 +999,9 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
             } else {
               //last time through, filling up the rest of count
               lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512, SEEK_SET);
-              read(fsFD, buf+bufLoc, (maxBytes-writtenBytes));
-              cursors[y].pos = ((INode_array[i].file_blocks[loc]-1)*512) + (maxBytes-writtenBytes);
-              writtenBytes += (maxBytes-writtenBytes);
+              read(fsFD, buf+bufLoc, check);
+              cursors[y].pos = ((INode_array[i].file_blocks[loc]-1)*512) + check;
+              writtenBytes += check;
               bufLoc+=writtenBytes;
               return writtenBytes;
             }
