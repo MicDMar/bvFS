@@ -129,8 +129,6 @@ int bv_init(const char *fs_fileName) {
 
   fsFD = open(fs_fileName, O_CREAT | O_RDWR | O_EXCL, 0644);
 
-  printf("%lu\n", sizeof(blank_INode));
-
   if(fsFD < 0){
     if(errno == EEXIST){
 
@@ -213,8 +211,6 @@ int bv_init(const char *fs_fileName) {
       for(short x = 1; x < 256; x++){
         tracker = block+x;
         write(fsFD, (void *)(&tracker), 2);
-        // DEBUG OUTPUT
-        //printf("Writing: %d\n", tracker);
         if(loc == 0) { super_block.offsets[x] = tracker; }
 
         // Last 2 bytes before block end goes to next superblock
@@ -244,7 +240,6 @@ int bv_init(const char *fs_fileName) {
 
       // Push that int into the specified position in the specific location in the super_blocks array.
       super_block.offsets[j] = num;
-      //printf("%d\n", super_block.offsets[j]);
     }
 
     // File system was initialized correctly.
@@ -303,7 +298,6 @@ int bv_destroy() {
 
     // Close the file.
     close(fsFD);
-    printf("Thank you for using bv_fs.");
     return 0;
   }
 
@@ -362,7 +356,6 @@ int bv_open(const char *fileName, int mode) {
       if(mode == 1 || mode == 0){
         // We need to find the next block that can be written to.
         int bytes = INode_array[i].num_bytes;
-        printf("%d\n", bytes);
 
         int loc = 0;
         for(int j = 1; j < sizeof(INode_array[i].file_blocks)/sizeof(INode_array[i].file_blocks[0]); j++){
@@ -483,7 +476,6 @@ int bv_open(const char *fileName, int mode) {
 
       // Go through our offset array in each super block.
       for(int x = 0; x < sizeof(super_block.offsets)/sizeof(super_block.offsets[0]); x++){
-      //printf("%d\n", super_block.offsets[x]);
 
         // This means that there is empty space at this offset!
         if(super_block.is_empty == 1){
@@ -624,16 +616,15 @@ int bv_open(const char *fileName, int mode) {
  */
 int bv_close(int bvfs_FD) {
 
-    if(current_open_file == (const char *) '\0'){
-      fprintf(stderr, "File not perviously openend via bv_open");
-      return -1;
-    }
-
     for(int i = 0; i < sizeof(cursors)/sizeof(cursors[0]); i++){
-      if(current_open_file == cursors[i].file_name){
-        current_open_file = (const char *)'\0';
-        cursors[i].is_open = 0;
-        return 0;
+      if(cursors[i].fd == bvfs_FD){
+        if(cursors[i].is_open == 1){
+          cursors[i].is_open = 0;
+          return 0;
+        } else {
+          fprintf(stderr, "That file is not open.");
+          return -1;
+        }
       }
     }
 
@@ -673,6 +664,7 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
     if(cursors[i].fd == bvfs_FD){
       if(cursors[i].is_open == 1){
         current_open_file = cursors[i].file_name;
+        break;
       } else {
         fprintf(stderr, "That file is not open.");
         return -1;
@@ -683,9 +675,7 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
 
   for(int i = 0; i < sizeof(INode_array)/sizeof(INode_array[0]); i++){
     // Check to see if fileNames match.
-    //printf("%s\n", INode_array[i].file_name);
     if(strcmp(INode_array[i].file_name, current_open_file) == 0){
-      printf("Found our file.\n");
       
       //case for if there is more space in our file compared to
       //how much we want to read into buffer
@@ -701,17 +691,17 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
           // Seek to where the cursor is.
           lseek(fsFD, cursors[y].pos, SEEK_SET);
 
-          //printf("%d", cursors[y].pos);
 
           // Begin to write
           // Make sure to check if you are going over the block size (or amount you have left
           // in the block) and if we have enough room.
 
           // In this case we have enough room to write without overflowing to a new block.
-          if(((cursors[y].block)*512 - cursors[y].pos) >= check){
+          if(((cursors[y].block)*512 - cursors[y].pos) > check){
             write(fsFD, buf, check);
             writtenBytes += check;
             INode_array[i].num_bytes += writtenBytes;
+            cursors[y].pos += writtenBytes;
             return writtenBytes;
           } else {
             // Lets do the first time for the "rest" of the block even if it is the start.
@@ -724,19 +714,30 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
 
             location += ((cursors[y].block-1)*512 - cursors[y].pos);
 
+            
             if(location == 0){
               write(fsFD, buf, 512);
               writtenBytes += 512;
               check -= 512;
-              location+=512;
-            } else {
+              location += 512;
+            } else if(location != 512 && location > 0){
               write(fsFD, buf, location);
               writtenBytes += location;
               check -= location;
             }
+            
+            if (location < 0){
+              location = 0;
+            } 
+            
 
-            while(check >= 0){
-              //printf("%d\n", check);
+            if(check == 0){
+              cursors[y].pos += writtenBytes;
+              INode_array[i].num_bytes += writtenBytes;
+              return writtenBytes;
+            }
+
+            while(check > 0){
               int new_block = 0;
               // Aquire a new block.
 
@@ -795,6 +796,12 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
                 }
               }
 
+              // Set our cursor to its new position.
+              cursors[y].pos = (new_block-1)*512;
+              cursors[y].block = new_block;
+              cursors[y].file_block++;
+
+
               // Seek to the begining of that new block.
               lseek(fsFD, (new_block-1)*512, SEEK_SET);
 
@@ -803,15 +810,16 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
                 write(fsFD, buf+location, 512);
                 writtenBytes += 512;
                 location += 512;
+                cursors[y].pos += 512;
+                check -= 512;
               } else {
                 write(fsFD, buf+location, check);
                 writtenBytes += check;
                 location += check;
+                cursors[y].pos += check;
+                check -= check;
               }
 
-              check -= 512;
-              //printf("%d\n", check);
-              
               if(check <= 0){
                 INode_array[i].num_bytes += writtenBytes;
                 return writtenBytes;
@@ -823,7 +831,6 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
     }
   }
 
-  //printf("%d\n", writtenBytes);
   return writtenBytes;
 }
 
@@ -856,9 +863,10 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
 
   // check to see if our file is open.
   for(int i = 0; i < sizeof(cursors)/sizeof(cursors[0]); i++){
-    if(cursors[i].pos == bvfs_FD){
+    if(cursors[i].fd == bvfs_FD){
       if(cursors[i].is_open == 1){
         current_open_file = cursors[i].file_name;
+        break;
       } else {
         fprintf(stderr, "That file is not open.");
         return -1;
@@ -881,19 +889,12 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
             return -1;
           }
 
-          printf("Nice.\n");
-
           //seek to where cursor is
           //would our cursor be at the start of a block? 
           lseek(fsFD, cursors[y].pos, SEEK_SET);
           //if our count is asking for more bytes than we have in file
           int maxBytes = INode_array[i].num_bytes;
           int cursor_offset = cursors[y].pos - (INode_array[i].file_blocks[cursors[y].file_block]-1)*512;
-          /*printf("%d\n", cursors[y].pos);
-          printf("%d\n", (INode_array[i].file_blocks[cursors[y].file_block]-1)*512);
-
-          printf("%d\n", cursor_offset);
-          printf("%d\n", maxBytes);*/
           if(maxBytes - cursor_offset == 0){
             fprintf(stderr, "Nothing left to read.");
             return -1;
@@ -935,7 +936,6 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
               cursors[y].pos = ((INode_array[i].file_blocks[loc]-1)*512) + check;
               writtenBytes += check;
               bufLoc+=writtenBytes;
-              printf("%d\n", writtenBytes);
               return writtenBytes;
 
             } else {
@@ -946,7 +946,6 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
               cursors[y].pos = ((INode_array[i].file_blocks[loc]-1)*512) + (maxBytes-writtenBytes);
               writtenBytes+=check;
               bufLoc+=writtenBytes;
-              printf("%d\n", writtenBytes);
               return writtenBytes;
             }
           }
@@ -963,7 +962,6 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
                 if(maxBytes < ((cursors[y].block+1)*512)-cursors[y].pos){
                   read(fsFD, buf+bufLoc, maxBytes);
                   cursors[y].pos += maxBytes;
-                  printf("%d\n", maxBytes);
                   return maxBytes;
                 }
               }
@@ -981,10 +979,14 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
               //last time through, filling up the rest of count
               lseek(fsFD, (INode_array[i].file_blocks[loc]-1)*512 + cursor_offset, SEEK_SET);
               read(fsFD, buf+bufLoc, check);
-              cursors[y].pos = ((INode_array[i].file_blocks[loc]-1)*512) + check;
+              if(check == 512){
+                cursors[y].file_block++;
+                cursors[y].pos = ((INode_array[i].file_blocks[cursors[y].file_block]-1)*512);
+              } else {
+                cursors[y].pos = ((INode_array[i].file_blocks[cursors[y].file_block]-1)*512 + check);
+              }
               writtenBytes += check;
               bufLoc+=writtenBytes;
-              printf("%d\n", writtenBytes);
               return writtenBytes;
 
             } else {
@@ -994,7 +996,6 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
               cursors[y].pos = ((INode_array[i].file_blocks[loc]-1)*512) + (maxBytes-writtenBytes);
               writtenBytes += (maxBytes-writtenBytes);
               bufLoc+=writtenBytes;
-              printf("%d\n", writtenBytes);
               return writtenBytes;
             }
           }
@@ -1002,7 +1003,6 @@ int bv_read(int bvfs_FD, void *buf, size_t count) {
       }
     }
   }
-  printf("%d\n",writtenBytes);
   return writtenBytes;
 }
 
