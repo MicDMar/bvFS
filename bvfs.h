@@ -708,27 +708,26 @@ int bv_write(int bvfs_FD, const void *buf, size_t count) {
             // That way we know by the time we get to the while loop we are working with full block sizes.
 
 
-            int location = 0;
             // Ask backman if this is gonna work. Is buf going to keep our position to let us continue writing?
             // Or do we need a notion of a cursor for that?
 
-            location += ((cursors[y].block-1)*512 - cursors[y].pos);
+            int location = ((cursors[y].block)*512 - cursors[y].pos);
 
-            
-            if(location == 0){
+           
+           // This means we are at the start of the block. 
+            if(location == 512){
               write(fsFD, buf, 512);
               writtenBytes += 512;
               check -= 512;
-              location += 512;
             } else if(location != 512 && location > 0){
               write(fsFD, buf, location);
               writtenBytes += location;
               check -= location;
             }
             
-            if (location < 0){
+            /*f (location < 0){
               location = 0;
-            } 
+            } */
             
 
             if(check == 0){
